@@ -1,0 +1,151 @@
+import urllib
+from pyexpat.errors import messages
+from time import sleep
+
+import telebot
+import re
+import subprocess
+import sqlite3
+
+
+bot = telebot.TeleBot('8365572085:AAHpIPbYK29p6kw6TzUBzRIdlz96zGCvrDE')
+namevpn = ''
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, 'Ну что, стартуем!\n\nСписок команд:\n'
+                                      '/adduser Добавить пользователя ')
+
+# Подключаемся и создаем таблицу, если ее нет
+conn = sqlite3.connect('users.db')
+c = conn.cursor()
+c.execute('CREATE TABLE IF NOT EXISTS users(id int auto_increment primary key, username)')
+conn.commit()
+c.close()
+conn.close()
+@bot.message_handler(commands=['adduser'])
+def add_user(message):
+
+    name =  bot.send_message(message.chat.id, 'Введи имя пользователя(любое)')
+    bot.register_next_step_handler(name, check_name)
+
+def check_name(message):
+    global namevpn
+    namevpn = message.text.strip().lower()
+    msg = message
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    check_in_bd = c.execute('SELECT * FROM users WHERE username = ?', (namevpn,))
+    exists = check_in_bd.fetchone()
+    if exists:
+        msg = bot.send_message(message.chat.id, 'такой пользователь уже существует, введи другое имя')
+        bot.register_next_step_handler(msg, check_name)
+    else:
+        if re.search(r'[^а-яА-ЯёЁ:;/?!@#$%^&*()]', namevpn) and namevpn.isalpha() == True:
+
+            bot.send_message(message.chat.id, f'Отлично, {namevpn} не занято, сейчас создадим...')
+            create_vpn_profile(message)
+
+        else:
+            name = bot.send_message(message.chat.id, f'Имя может содержать только латиницу без спецсимволов \n'
+                                                     f'Введи еще раз')
+            bot.register_next_step_handler(name, check_name)
+    c.close()
+    conn.close()
+    print(check_in_bd)
+
+@bot.message_handler(commands=['dbview'])
+def dbview(message):
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('SELECT * FROM users')
+    users = c.fetchall()
+    info = ''
+    for el in users:
+         info += f'{el[1]}\n'
+    c.close()
+    conn.close()
+    bot.send_message(message.chat.id, info)
+
+def create_vpn_profile(message):
+
+    print(namevpn)
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute(f"INSERT INTO users (username) VALUES ('{namevpn}')")
+    conn.commit()
+    c.close()
+    conn.close()
+    command = f'ikev2.sh --addclient {namevpn}'
+    print(command)
+    subprocess.check_output(command, shell=True)
+
+
+    iosB = telebot.types.InlineKeyboardButton(f'📱iOS', callback_data='iOS_profile')
+    aUnd11B = telebot.types.InlineKeyboardButton(f'🤖 Android до v11', callback_data='sswan_profile')
+    aAft11B = telebot.types.InlineKeyboardButton(f'🤖 Android V11 и больше', callback_data='android_profile')
+    macB = telebot.types.InlineKeyboardButton(f'💻 MacOS', callback_data='MacOS_profile')
+    winB = telebot.types.InlineKeyboardButton(f'🪟 Windows', callback_data='win_profile')
+    row1 = [iosB,macB]
+    row2 = [aUnd11B,aAft11B]
+    row3 = [winB]
+    buttons = [row1, row2, row3]
+    markup = telebot.types.InlineKeyboardMarkup(buttons)
+    bot.send_message(message.chat.id,  f'Готово, выбери платформу куда нужно установить ВПН', reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+    if call.data == 'iOS_profile':
+        ios_p(call)
+    if call.data == 'sswan_profile':
+        sswan_profile(call)
+    if call.data == 'android_profile':
+        android_p(call)
+    if call.data == 'win_profile':
+        win_profile(call)
+    if call.data == 'MacOS_profile':
+        macos_profile(call)
+
+
+
+def ios_p(call):
+    bot.send_message(call.message.chat.id,f'Sending ios profile {namevpn}')
+    bot.send_message(call.message.chat.id, "<a href='https://telegra.ph/Testovaya-instrukciya-dlya-IOS-01-17'>Инструкция iOS</a>", parse_mode='HTML')
+    bot.send_document(call.message.chat.id, open(f"/root/{namevpn}.mobileconfig", "rb"))
+
+def android_p(call):
+    bot.send_message(call.message.chat.id,f'Sending android profile {namevpn}')
+    bot.send_message(call.message.chat.id, "<a href='https://telegra.ph/Instrukciya-Android-v11-01-17'>Инструкция Android</a>", parse_mode='HTML')
+    bot.send_document(call.message.chat.id, open(f"/root/{namevpn}.p12", "rb"))
+
+def sswan_profile(call):
+    bot.send_message(call.message.chat.id,f'Sending sswan profile {namevpn}')
+    bot.send_message(call.message.chat.id, "<a href='https://telegra.ph/Instrukciya-Android-do-11v-01-17'>Инструкция StrongSwan</a>", parse_mode='HTML')
+    bot.send_document(call.message.chat.id, open(f"/root/{namevpn}.sswan", "rb"))
+
+def macos_profile(call):
+    bot.send_message(call.message.chat.id,f'Sending macos profile {namevpn}')
+    bot.send_message(call.message.chat.id, "<a href='https://telegra.ph/Instrukciya-macOS-01-17'>Инструкция MacOS</a>", parse_mode='HTML')
+    bot.send_document(call.message.chat.id, open(f"/root/{namevpn}.mobileconfig", "rb"))
+
+def win_profile(call):
+    bot.send_message(call.message.chat.id,f'Sending Windows profile {namevpn}')
+    bot.send_message(call.message.chat.id, "<a href='https://telegra.ph/Instrukciya-dlya-Windows-01-17'>Инструкция Windows</a>", parse_mode='HTML')
+    bot.send_document(call.message.chat.id, open(f"/root/{namevpn}.p12", "rb"))
+    bot.send_document(call.message.chat.id, open(f"/root/Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg", "rb"))
+    bot.send_document(call.message.chat.id, open(f"/root/ikev2_config_import.cmd", "rb"))
+
+
+@bot.message_handler(commands=['dbclear'])
+def dbclear(message):
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM users')
+    conn.commit()
+    c.close()
+    conn.close()
+    bot.send_message(message.chat.id, 'Users deleted in DB')
+
+
+
+bot.polling(none_stop=True)
