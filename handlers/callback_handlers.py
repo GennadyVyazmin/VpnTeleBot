@@ -424,3 +424,35 @@ def send_windows_profile(bot, call, username):
             bot.send_document(call.message.chat.id, file, caption="Windows сертификат")
     else:
         bot.send_message(call.message.chat.id, f"❌ Файл Windows сертификат не найден")
+
+
+@bot.callback_query_handler(func=lambda call: call.data in ['reset_all_counters', 'cancel_reset_counters'])
+def handle_reset_counters(call):
+    user_id = call.from_user.id
+
+    if not db.is_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+        return
+
+    if call.data == 'reset_all_counters':
+        if traffic_monitor.reset_traffic_counter():
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="✅ Все счетчики трафика сброшены!\n\n"
+                     "Следующее обновление будет считать трафик от новых базовых значений."
+            )
+        else:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="❌ Ошибка сброса счетчиков"
+            )
+    else:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ Сброс счетчиков отменен"
+        )
+
+    bot.answer_callback_query(call.id)
