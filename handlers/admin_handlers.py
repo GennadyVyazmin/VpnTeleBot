@@ -6,7 +6,7 @@ from telebot import types
 from datetime import datetime
 from database import db
 from vpn_manager import vpn_manager
-from utils import get_backup_info_text, format_database_info
+from utils import get_backup_info_text, format_database_info, format_bytes
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -92,19 +92,20 @@ def setup_admin_handlers(bot):
 
         buttons = []
         for user in users:
-            username = user[1]
+            if len(user) >= 2:
+                username = user[1]
 
-            # Для супер-админа показываем кто создал пользователя
-            if db.is_super_admin(user_id):
-                created_by_username = user[3]
-                button_text = f"🗑️ {username} (создал: {created_by_username})"
-            else:
-                button_text = f"🗑️ {username}"
+                # Для супер-админа показываем кто создал пользователя
+                if db.is_super_admin(user_id) and len(user) >= 4:
+                    created_by_username = user[3]
+                    button_text = f"🗑️ {username} (создал: {created_by_username})"
+                else:
+                    button_text = f"🗑️ {username}"
 
-            buttons.append([types.InlineKeyboardButton(
-                button_text,
-                callback_data=f'delete_{username}'
-            )])
+                buttons.append([types.InlineKeyboardButton(
+                    button_text,
+                    callback_data=f'delete_{username}'
+                )])
 
         markup = types.InlineKeyboardMarkup(buttons)
 

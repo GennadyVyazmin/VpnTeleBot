@@ -3,7 +3,7 @@ import logging
 from telebot import types
 from datetime import datetime
 from database import db
-from utils import validate_username, format_traffic_stats, format_database_info, get_backup_info_text
+from utils import validate_username, format_traffic_stats, format_database_info, get_backup_info_text, format_bytes
 from vpn_manager import vpn_manager
 from config import Config
 from traffic_monitor import traffic_monitor
@@ -144,13 +144,36 @@ def setup_user_handlers(bot):
 
         user_list = "📋 Список пользователей:\n\n"
         for user in users:
-            user_id_db, username, created_by, created_by_username, created_at, total_conn, last_conn, sent, received, is_active = user
+            # ВНИМАНИЕ: теперь в кортеже 11 элементов!
+            # 0: id, 1: username, 2: created_by, 3: created_by_username, 4: created_at,
+            # 5: total_connections, 6: last_connected, 7: total_bytes_sent, 8: total_bytes_received,
+            # 9: is_active, 10: last_updated
+            if len(user) >= 11:
+                username = user[1]
+                created_by_username = user[3]
+                created_at = user[4]
+                total_conn = user[5] or 0
+                last_conn = user[6]
+                sent = user[7] or 0
+                received = user[8] or 0
+                is_active = user[9]
+            else:
+                # Для обратной совместимости со старыми версиями
+                username = user[1]
+                created_by_username = user[3] if len(user) > 3 else "Неизвестно"
+                created_at = user[4] if len(user) > 4 else ""
+                total_conn = user[5] if len(user) > 5 else 0
+                last_conn = user[6] if len(user) > 6 else ""
+                sent = user[7] if len(user) > 7 else 0
+                received = user[8] if len(user) > 8 else 0
+                is_active = user[9] if len(user) > 9 else 0
+
             status = "🟢" if is_active else "⚪"
             user_list += f"{status} {username}\n"
-            user_list += f"   Создан: {created_at[:10]} администратором {created_by_username}\n"
+            user_list += f"   Создан: {created_at[:10] if created_at else 'Неизвестно'} администратором {created_by_username}\n"
             if total_conn > 0:
-                total_traffic = (sent or 0) + (received or 0)
-                user_list += f"   Подключений: {total_conn}, трафик: {total_traffic / (1024 ** 3):.2f} GB\n"
+                total_traffic = sent + received
+                user_list += f"   Подключений: {total_conn}, трафик: {format_bytes(total_traffic)}\n"
             user_list += "\n"
 
         bot.send_message(message.chat.id, user_list)
@@ -259,12 +282,14 @@ def setup_user_handlers(bot):
 
         buttons = []
         for user in users:
-            user_id_db, username, created_by, created_by_username, created_at, total_conn, last_conn, sent, received, is_active = user
-            status = "🟢" if is_active else "⚪"
-            buttons.append([types.InlineKeyboardButton(
-                f"{status} {username}",
-                callback_data=f'userstats_{username}'
-            )])
+            if len(user) >= 2:
+                username = user[1]
+                is_active = user[9] if len(user) > 9 else 0
+                status = "🟢" if is_active else "⚪"
+                buttons.append([types.InlineKeyboardButton(
+                    f"{status} {username}",
+                    callback_data=f'userstats_{username}'
+                )])
 
         markup = types.InlineKeyboardMarkup(buttons)
         bot.send_message(message.chat.id, "Выберите пользователя для просмотра статистики:", reply_markup=markup)
@@ -285,18 +310,22 @@ def setup_user_handlers(bot):
             return
 
         # Сортируем по трафику
-        users_sorted = sorted(users, key=lambda x: (x[7] or 0) + (x[8] or 0), reverse=True)
+        users_sorted = sorted(users, key=lambda x: ((x[7] or 0) + (x[8] or 0) if len(x) > 8 else 0), reverse=True)
 
         stats_text = "📊 Общая статистика трафика (Топ-10)\n\n"
         total_traffic_all = 0
 
         for user in users_sorted[:10]:
-            username = user[1]
-            total_conn = user[5] or 0
-            sent = user[7] or 0
-            received = user[8] or 0
-            is_active = user[9]
-            last_conn = user[6]
+            if len(user) >= 9:
+                username = user[1]
+                total_conn = user[5] or 0
+                sent = user[7] or 0
+                received = user[8] or 0
+                is_active = user[9] if len(user) > 9 else 0
+                last_conn = user[6] if len(user) > 6 else None
+            else:
+                # Для обратной совместимости
+                continue
 
             total_traffic = sent + received
             total_traffic_all += total_traffic
@@ -305,12 +334,12 @@ def setup_user_handlers(bot):
                 status = "🟢" if is_active else "⚪"
                 stats_text += f"{status} {username}:\n"
                 stats_text += f"   • Подключений: {total_conn}\n"
-                stats_text += f"   • Трафик: {total_traffic / (1024 ** 3):.2f} GB\n"
+                stats_text += f"   • Трафик: {format_bytes(total_traffic)}\n"
                 if last_conn:
                     stats_text += f"   • Активность: {last_conn[:10]}\n"
                 stats_text += "\n"
 
-        stats_text += f"📈 Всего трафика: {total_traffic_all / (1024 ** 3):.2f} GB"
+        stats_text += f"📈 Всего трафика: {format_bytes(total_traffic_all)}"
 
         bot.send_message(message.chat.id, stats_text)
 
