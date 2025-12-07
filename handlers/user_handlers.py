@@ -34,6 +34,8 @@ def setup_user_handlers(bot):
 /activestats - Активные подключения
 /syncstats - Синхронизировать статистику
 /dbstatus - Информация о базе данных
+/debugtraffic - Отладочная информация о трафике
+/resettrafficcounter - Сбросить счетчики трафика
 
 👨‍💻 Админ-команды:
 /admin - Панель администратора
@@ -41,7 +43,8 @@ def setup_user_handlers(bot):
 /deleteuser - Удалить пользователя
 /dbclear - Очистить базу данных
 /backup - Создать бэкап БД
-/backuplist - Список бэкапов"""
+/backuplist - Список бэкапов
+/resettraffic - Обнулить статистику трафика"""
             else:
                 welcome_text = """🚀 VPN Manager Bot - Админ Панель
 
@@ -54,11 +57,14 @@ def setup_user_handlers(bot):
 /activestats - Активные подключения
 /syncstats - Синхронизировать статистику
 /dbstatus - Информация о базе данных
+/debugtraffic - Отладочная информация о трафике
+/resettrafficcounter - Сбросить счетчики трафика
 
 👨‍💻 Админ-команды:
 /admin - Панель администратора
 /deleteuser - Удалить пользователя
-/backup - Создать бэкап БД"""
+/backup - Создать бэкап БД
+/resettraffic - Обнулить статистику трафика"""
         else:
             welcome_text = """🚀 VPN Manager Bot
 
@@ -144,10 +150,6 @@ def setup_user_handlers(bot):
 
         user_list = "📋 Список пользователей:\n\n"
         for user in users:
-            # ВНИМАНИЕ: теперь в кортеже 11 элементов!
-            # 0: id, 1: username, 2: created_by, 3: created_by_username, 4: created_at,
-            # 5: total_connections, 6: last_connected, 7: total_bytes_sent, 8: total_bytes_received,
-            # 9: is_active, 10: last_updated
             if len(user) >= 11:
                 username = user[1]
                 created_by_username = user[3]
@@ -158,7 +160,6 @@ def setup_user_handlers(bot):
                 received = user[8] or 0
                 is_active = user[9]
             else:
-                # Для обратной совместимости со старыми версиями
                 username = user[1]
                 created_by_username = user[3] if len(user) > 3 else "Неизвестно"
                 created_at = user[4] if len(user) > 4 else ""
@@ -207,8 +208,8 @@ def setup_user_handlers(bot):
         if traffic_data:
             stats_text += "\n\n🔍 Активные подключения:"
             for username, info in list(traffic_data.items())[:5]:
-                traffic_mb = (info['current_sent'] + info['current_received']) / (1024 * 1024)
-                stats_text += f"\n• {username}: {traffic_mb:.1f} MB"
+                traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
+                stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
 
         bot.send_message(message.chat.id, stats_text)
 
@@ -253,13 +254,15 @@ def setup_user_handlers(bot):
         stats_text = "🟢 Активные подключения (из ipsec):\n\n"
 
         for username, data in traffic_data.items():
-            total_traffic = (data['current_sent'] + data['current_received']) / (1024 ** 2)  # MB
+            total_traffic = (data['absolute_sent'] + data['absolute_received']) / (1024 ** 2)  # MB
 
             stats_text += f"👤 {username}\n"
             stats_text += f"   IP: {data['client_ip']}\n"
             stats_text += f"   ID: {data['connection_id']}\n"
-            stats_text += f"   Трафик: {total_traffic:.2f} MB\n"
-            stats_text += f"   (отправлено: {data['current_sent'] / 1024 / 1024:.1f} MB, получено: {data['current_received'] / 1024 / 1024:.1f} MB)\n\n"
+            stats_text += f"   Абсолютные значения:\n"
+            stats_text += f"     • Отправлено: {data['absolute_sent'] / 1024 / 1024:.1f} MB\n"
+            stats_text += f"     • Получено: {data['absolute_received'] / 1024 / 1024:.1f} MB\n"
+            stats_text += f"   Всего: {total_traffic:.2f} MB\n\n"
 
         stats_text += f"Всего активных: {len(traffic_data)}"
 
@@ -324,7 +327,6 @@ def setup_user_handlers(bot):
                 is_active = user[9] if len(user) > 9 else 0
                 last_conn = user[6] if len(user) > 6 else None
             else:
-                # Для обратной совместимости
                 continue
 
             total_traffic = sent + received
@@ -368,6 +370,92 @@ def setup_user_handlers(bot):
 
         bot.send_message(message.chat.id, status_text)
 
+    @bot.message_handler(commands=['debugtraffic'])
+    def debug_traffic(message):
+        """Отладочная информация о трафике"""
+        user_id = message.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+            return
+
+        logger.info(f"Команда /debugtraffic от администратора {user_id}")
+
+        # Получаем сырые данные из ipsec
+        traffic_data = traffic_monitor.parse_ipsec_status()
+
+        if not traffic_data:
+            bot.send_message(message.chat.id, "📭 Нет активных подключений")
+            return
+
+        debug_text = "🔧 Отладочная информация о трафике:\n\n"
+
+        for username, data in traffic_data.items():
+            debug_text += f"👤 {username}:\n"
+            debug_text += f"  IP: {data['client_ip']}\n"
+            debug_text += f"  Connection ID: {data['connection_id']}\n"
+            debug_text += f"  Абсолютные значения из ipsec:\n"
+            debug_text += f"    • Отправлено: {data['absolute_sent']:,} bytes ({data['absolute_sent'] / 1024 / 1024:.1f} MB)\n"
+            debug_text += f"    • Получено: {data['absolute_received']:,} bytes ({data['absolute_received'] / 1024 / 1024:.1f} MB)\n"
+
+            # Получаем базовые значения
+            base = traffic_monitor.get_base_traffic(username)
+            debug_text += f"  Базовые значения:\n"
+            debug_text += f"    • Отправлено: {base['sent']:,} bytes\n"
+            debug_text += f"    • Получено: {base['received']:,} bytes\n"
+
+            # Вычисляем разницу
+            sent_diff = max(0, data['absolute_sent'] - base['sent'])
+            received_diff = max(0, data['absolute_received'] - base['received'])
+            debug_text += f"  Разница (будет добавлено):\n"
+            debug_text += f"    • Отправлено: +{sent_diff:,} bytes (+{sent_diff / 1024 / 1024:.1f} MB)\n"
+            debug_text += f"    • Получено: +{received_diff:,} bytes (+{received_diff / 1024 / 1024:.1f} MB)\n\n"
+
+        # Разбиваем если слишком длинное
+        if len(debug_text) > 4000:
+            parts = [debug_text[i:i + 4000] for i in range(0, len(debug_text), 4000)]
+            for part in parts:
+                bot.send_message(message.chat.id, f"```{part}```", parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id, f"```{debug_text}```", parse_mode='Markdown')
+
+    @bot.message_handler(commands=['resettrafficcounter'])
+    def reset_traffic_counter(message):
+        """Сбросить счетчики трафика (для тестирования)"""
+        user_id = message.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+            return
+
+        logger.info(f"Команда /resettrafficcounter от администратора {user_id}")
+
+        # Получаем имя пользователя если указано
+        text = message.text.strip()
+        parts = text.split()
+
+        if len(parts) > 1:
+            username = parts[1]
+            if traffic_monitor.reset_traffic_counter(username):
+                bot.send_message(message.chat.id, f"✅ Счетчики трафика сброшены для пользователя {username}")
+            else:
+                bot.send_message(message.chat.id, f"❌ Ошибка сброса счетчиков для {username}")
+        else:
+            # Сброс всех счетчиков
+            buttons = [
+                [types.InlineKeyboardButton("✅ Сбросить ВСЕ счетчики", callback_data='reset_all_counters')],
+                [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_reset_counters')]
+            ]
+            markup = types.InlineKeyboardMarkup(buttons)
+
+            bot.send_message(
+                message.chat.id,
+                "⚠️ Сбросить все счетчики трафика?\n\n"
+                "Это приведет к тому, что текущие абсолютные значения из ipsec станут базовыми.\n"
+                "Следующее обновление будет считать трафик от новых базовых значений.",
+                reply_markup=markup
+            )
+
 
 def show_platform_selector(bot, chat_id, username):
     """Показывает выбор платформы для конфигурации"""
@@ -389,87 +477,3 @@ def show_platform_selector(bot, chat_id, username):
         f"Выберите платформу для установки VPN пользователя '{username}':",
         reply_markup=markup
     )
-
-
-@bot.message_handler(commands=['debugtraffic'])
-@admin_required
-def debug_traffic(message):
-    """Отладочная информация о трафике"""
-    user_id = message.from_user.id
-
-    if not db.is_admin(user_id):
-        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-        return
-
-    logger.info(f"Команда /debugtraffic от администратора {user_id}")
-
-    # Получаем сырые данные из ipsec
-    traffic_data = traffic_monitor.parse_ipsec_status()
-
-    if not traffic_data:
-        bot.send_message(message.chat.id, "📭 Нет активных подключений")
-        return
-
-    debug_text = "🔧 Отладочная информация о трафике:\n\n"
-
-    for username, data in traffic_data.items():
-        debug_text += f"👤 {username}:\n"
-        debug_text += f"  IP: {data['client_ip']}\n"
-        debug_text += f"  Connection ID: {data['connection_id']}\n"
-        debug_text += f"  Абсолютные значения из ipsec:\n"
-        debug_text += f"    • Отправлено: {data['absolute_sent']} bytes ({data['absolute_sent'] / 1024 / 1024:.1f} MB)\n"
-        debug_text += f"    • Получено: {data['absolute_received']} bytes ({data['absolute_received'] / 1024 / 1024:.1f} MB)\n"
-
-        # Получаем базовые значения
-        base = traffic_monitor.get_base_traffic(username)
-        debug_text += f"  Базовые значения:\n"
-        debug_text += f"    • Отправлено: {base['sent']} bytes\n"
-        debug_text += f"    • Получено: {base['received']} bytes\n"
-
-        # Вычисляем разницу
-        sent_diff = max(0, data['absolute_sent'] - base['sent'])
-        received_diff = max(0, data['absolute_received'] - base['received'])
-        debug_text += f"  Разница (будет добавлено):\n"
-        debug_text += f"    • Отправлено: +{sent_diff} bytes (+{sent_diff / 1024 / 1024:.1f} MB)\n"
-        debug_text += f"    • Получено: +{received_diff} bytes (+{received_diff / 1024 / 1024:.1f} MB)\n\n"
-
-    bot.send_message(message.chat.id, f"```{debug_text}```", parse_mode='Markdown')
-
-
-@bot.message_handler(commands=['resettrafficcounter'])
-@admin_required
-def reset_traffic_counter(message):
-    """Сбросить счетчики трафика (для тестирования)"""
-    user_id = message.from_user.id
-
-    if not db.is_admin(user_id):
-        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-        return
-
-    logger.info(f"Команда /resettrafficcounter от администратора {user_id}")
-
-    # Получаем имя пользователя если указано
-    text = message.text.strip()
-    parts = text.split()
-
-    if len(parts) > 1:
-        username = parts[1]
-        if traffic_monitor.reset_traffic_counter(username):
-            bot.send_message(message.chat.id, f"✅ Счетчики трафика сброшены для пользователя {username}")
-        else:
-            bot.send_message(message.chat.id, f"❌ Ошибка сброса счетчиков для {username}")
-    else:
-        # Сброс всех счетчиков
-        buttons = [
-            [types.InlineKeyboardButton("✅ Сбросить ВСЕ счетчики", callback_data='reset_all_counters')],
-            [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_reset_counters')]
-        ]
-        markup = types.InlineKeyboardMarkup(buttons)
-
-        bot.send_message(
-            message.chat.id,
-            "⚠️ Сбросить все счетчики трафика?\n\n"
-            "Это приведет к тому, что текущие абсолютные значения из ipsec станут базовыми.\n"
-            "Следующее обновление будет считать трафик от новых базовых значений.",
-            reply_markup=markup
-        )
