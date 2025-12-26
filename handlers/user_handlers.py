@@ -49,7 +49,7 @@ def setup_user_handlers(bot):
 /admin - Панель администратора
 /manage_admins - Управление администраторами
 /deleteuser - Удалить пользователя
-/dbclear - Очистить базу данных
+/dbclear - Очистить база данных
 /backup - Создать бэкап БД
 /backuplist - Список бэкапов
 /resettraffic - Обнулить статистику трафика"""
@@ -230,6 +230,14 @@ def setup_user_handlers(bot):
                     text=user_list,
                     reply_markup=markup
                 )
+            except telebot.apihelper.ApiTelegramException as e:
+                if "message is not modified" in str(e):
+                    # Это нормально - пользователь нажал на ту же самую кнопку
+                    bot.answer_callback_query(callback_query_id=None)
+                else:
+                    logger.error(f"Ошибка редактирования сообщения: {e}")
+                    # Попробуем отправить новое сообщение
+                    bot.send_message(chat_id, user_list, reply_markup=markup)
             except Exception as e:
                 logger.error(f"Ошибка редактирования сообщения: {e}")
                 bot.send_message(chat_id, user_list, reply_markup=markup)
@@ -246,35 +254,43 @@ def setup_user_handlers(bot):
             bot.answer_callback_query(call.id, "Данные устарели. Используйте /listusers снова")
             return
 
+        # Обрабатываем разные типы callback
         if call.data.startswith('listusers_prev_'):
             try:
                 page = int(call.data.split('_')[2])
-                list_users_pages[chat_id]['page'] = page
-                show_list_users_page(bot, chat_id, message_id)
+                list_users_pages[chat_id]['page'] = max(0, page)
             except:
-                list_users_pages[chat_id]['page'] -= 1
-                show_list_users_page(bot, chat_id, message_id)
+                list_users_pages[chat_id]['page'] = max(0, list_users_pages[chat_id]['page'] - 1)
+            show_list_users_page(bot, chat_id, message_id)
             bot.answer_callback_query(call.id)
 
         elif call.data.startswith('listusers_next_'):
             try:
                 page = int(call.data.split('_')[2])
-                list_users_pages[chat_id]['page'] = page
-                show_list_users_page(bot, chat_id, message_id)
+                total_pages = (len(list_users_pages[chat_id]['users']) +
+                               list_users_pages[chat_id]['page_size'] - 1) // list_users_pages[chat_id]['page_size']
+                list_users_pages[chat_id]['page'] = min(total_pages - 1, page)
             except:
                 list_users_pages[chat_id]['page'] += 1
-                show_list_users_page(bot, chat_id, message_id)
+            show_list_users_page(bot, chat_id, message_id)
             bot.answer_callback_query(call.id)
 
         elif call.data == 'listusers_refresh':
             # Обновляем данные
             users = db.get_all_users()
             if users:
+                current_page = list_users_pages[chat_id]['page']
                 list_users_pages[chat_id]['users'] = users
+                # Проверяем, чтобы страница не вышла за пределы
+                total_pages = (len(users) + list_users_pages[chat_id]['page_size'] - 1) // list_users_pages[chat_id][
+                    'page_size']
+                if current_page >= total_pages:
+                    list_users_pages[chat_id]['page'] = max(0, total_pages - 1)
+
                 show_list_users_page(bot, chat_id, message_id)
-                bot.answer_callback_query(call.id, "Список обновлен")
+                bot.answer_callback_query(call.id, "✅ Список обновлен")
             else:
-                bot.answer_callback_query(call.id, "Нет пользователей")
+                bot.answer_callback_query(call.id, "📭 Нет пользователей")
 
     @bot.message_handler(commands=['stats'])
     def show_stats(message):
@@ -389,8 +405,17 @@ def setup_user_handlers(bot):
             bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
             return
 
+        # Создаем пагинированный список кнопок
+        buttons_per_page = 10
+        total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
+        page = 0  # Можно добавить навигацию по страницам
+
+        start_idx = page * buttons_per_page
+        end_idx = min(start_idx + buttons_per_page, len(users))
+
         buttons = []
-        for user in users:
+        for i in range(start_idx, end_idx):
+            user = users[i]
             if len(user) >= 2:
                 username = user[1]
                 is_active = user[9] if len(user) > 9 else 0
@@ -401,7 +426,11 @@ def setup_user_handlers(bot):
                 )])
 
         markup = types.InlineKeyboardMarkup(buttons)
-        bot.send_message(message.chat.id, "Выберите пользователя для просмотра статистики:", reply_markup=markup)
+        bot.send_message(
+            message.chat.id,
+            f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+            reply_markup=markup
+        )
 
     @bot.message_handler(commands=['traffic'])
     def traffic_stats(message):
@@ -519,9 +548,12 @@ def setup_user_handlers(bot):
 
         # Разбиваем если слишком длинное
         if len(debug_text) > 4000:
-            parts = [debug_text[i:i + 4000] for i in range(0, len(debug_text), 4000)]
-            for part in parts:
-                bot.send_message(message.chat.id, f"```{part}```", parse_mode='Markdown')
+            parts = split_message(debug_text)
+            for i, part in enumerate(parts):
+                if i == 0:
+                    bot.send_message(message.chat.id, f"```{part}```", parse_mode='Markdown')
+                else:
+                    bot.send_message(message.chat.id, f"```{part}```", parse_mode='Markdown')
         else:
             bot.send_message(message.chat.id, f"```{debug_text}```", parse_mode='Markdown')
 
