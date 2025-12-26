@@ -157,167 +157,6 @@ def setup_user_handlers(bot):
         # Показываем первую страницу
         show_list_users_page(bot, chat_id)
 
-    def show_list_users_page(bot, chat_id, edit_message_id=None, callback_query_id=None):
-        """Показывает страницу списка пользователей"""
-        if chat_id not in list_users_pages:
-            if callback_query_id:
-                try:
-                    bot.answer_callback_query(callback_query_id, "Данные устарели. Используйте /listusers снова")
-                except:
-                    pass
-            return
-
-        data = list_users_pages[chat_id]
-        users = data['users']
-        page = data['page']
-        page_size = data['page_size']
-
-        total_pages = (len(users) + page_size - 1) // page_size
-        start_idx = page * page_size
-        end_idx = min(start_idx + page_size, len(users))
-
-        user_list = f"📋 Список пользователей (стр. {page + 1}/{total_pages}):\n\n"
-
-        for i in range(start_idx, end_idx):
-            user = users[i]
-
-            # Безопасное извлечение данных
-            username = user[1] if len(user) > 1 else "Unknown"
-            created_by_username = user[3] if len(user) > 3 else "Неизвестно"
-            created_at = user[4] if len(user) > 4 else ""
-            total_conn = user[5] if len(user) > 5 else 0
-            last_conn = user[6] if len(user) > 6 else ""
-            sent = user[7] if len(user) > 7 else 0
-            received = user[8] if len(user) > 8 else 0
-            is_active = user[9] if len(user) > 9 else 0
-
-            status = "🟢" if is_active else "⚪"
-            user_list += f"{status} {username}\n"
-            user_list += f"   Создан: {created_at[:10] if created_at else 'Неизвестно'} администратором {created_by_username}\n"
-            if total_conn > 0:
-                total_traffic = sent + received
-                user_list += f"   Подключений: {total_conn}, трафик: {format_bytes(total_traffic)}\n"
-            user_list += "\n"
-
-        user_list += f"Всего пользователей: {len(users)}"
-
-        # Создаем кнопки навигации
-        markup = types.InlineKeyboardMarkup()
-        buttons = []
-
-        if page > 0:
-            buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'listusers_prev_{page - 1}'))
-
-        if page < total_pages - 1:
-            buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'listusers_next_{page + 1}'))
-
-        if buttons:
-            markup.row(*buttons)
-
-        # Кнопка обновления
-        markup.row(types.InlineKeyboardButton("🔄 Обновить", callback_data='listusers_refresh'))
-
-        try:
-            if edit_message_id:
-                bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=edit_message_id,
-                    text=user_list,
-                    reply_markup=markup
-                )
-            else:
-                bot.send_message(chat_id, user_list, reply_markup=markup)
-
-            # Если есть callback_query_id, отвечаем на него
-            if callback_query_id:
-                bot.answer_callback_query(callback_query_id)
-
-        except telebot.apihelper.ApiTelegramException as e:
-            error_msg = str(e)
-            if "message is not modified" in error_msg:
-                # Это нормально - пользователь нажал на ту же самую кнопку
-                if callback_query_id:
-                    try:
-                        bot.answer_callback_query(callback_query_id)
-                    except:
-                        pass  # Игнорируем ошибку устаревшего callback
-            elif "query is too old" in error_msg or "query ID is invalid" in error_msg:
-                # Игнорируем устаревшие callback queries
-                pass
-            else:
-                logger.error(f"Ошибка Telegram API: {e}")
-                # Попробуем отправить новое сообщение
-                if not edit_message_id:  # Только если не пытались редактировать
-                    bot.send_message(chat_id, user_list, reply_markup=markup)
-        except Exception as e:
-            logger.error(f"Ошибка при отображении страницы: {e}")
-            if not edit_message_id:  # Только если не пытались редактировать
-                bot.send_message(chat_id, "⚠️ Ошибка при отображении данных")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('listusers_'))
-    def handle_listusers_callback(call):
-        """Обработчик навигации по списку пользователей"""
-        chat_id = call.message.chat.id
-        message_id = call.message.message_id
-        callback_id = call.id
-
-        if chat_id not in list_users_pages:
-            try:
-                bot.answer_callback_query(callback_id, "Данные устарели. Используйте /listusers снова")
-            except:
-                pass
-            return
-
-        try:
-            # Обрабатываем разные типы callback
-            if call.data.startswith('listusers_prev_'):
-                try:
-                    page = int(call.data.split('_')[2])
-                    list_users_pages[chat_id]['page'] = max(0, page)
-                except:
-                    list_users_pages[chat_id]['page'] = max(0, list_users_pages[chat_id]['page'] - 1)
-
-            elif call.data.startswith('listusers_next_'):
-                try:
-                    page = int(call.data.split('_')[2])
-                    total_pages = (len(list_users_pages[chat_id]['users']) +
-                                   list_users_pages[chat_id]['page_size'] - 1) // list_users_pages[chat_id]['page_size']
-                    list_users_pages[chat_id]['page'] = min(total_pages - 1, page)
-                except:
-                    list_users_pages[chat_id]['page'] += 1
-
-            elif call.data == 'listusers_refresh':
-                # Обновляем данные
-                users = db.get_all_users()
-                if users:
-                    current_page = list_users_pages[chat_id]['page']
-                    list_users_pages[chat_id]['users'] = users
-                    # Проверяем, чтобы страница не вышла за пределы
-                    total_pages = (len(users) + list_users_pages[chat_id]['page_size'] - 1) // \
-                                  list_users_pages[chat_id]['page_size']
-                    if current_page >= total_pages:
-                        list_users_pages[chat_id]['page'] = max(0, total_pages - 1)
-
-                    # Показываем обновленную страницу
-                    show_list_users_page(bot, chat_id, message_id, callback_id)
-                    return
-                else:
-                    try:
-                        bot.answer_callback_query(callback_id, "📭 Нет пользователей")
-                    except:
-                        pass
-                    return
-
-            # Показываем страницу
-            show_list_users_page(bot, chat_id, message_id, callback_id)
-
-        except Exception as e:
-            logger.error(f"Ошибка обработки callback: {e}")
-            try:
-                bot.answer_callback_query(callback_id, "⚠️ Ошибка обработки")
-            except:
-                pass
-
     @bot.message_handler(commands=['stats'])
     def show_stats(message):
         user_id = message.from_user.id
@@ -607,3 +446,101 @@ def show_platform_selector(bot, chat_id, username):
         f"Выберите платформу для установки VPN пользователя '{username}':",
         reply_markup=markup
     )
+
+
+def show_list_users_page(bot, chat_id, edit_message_id=None, callback_query_id=None):
+    """Показывает страницу списка пользователей"""
+    if chat_id not in list_users_pages:
+        if callback_query_id:
+            try:
+                bot.answer_callback_query(callback_query_id, "Данные устарели. Используйте /listusers снова")
+            except:
+                pass
+        return
+
+    data = list_users_pages[chat_id]
+    users = data['users']
+    page = data['page']
+    page_size = data['page_size']
+
+    total_pages = (len(users) + page_size - 1) // page_size
+    start_idx = page * page_size
+    end_idx = min(start_idx + page_size, len(users))
+
+    user_list = f"📋 Список пользователей (стр. {page + 1}/{total_pages}):\n\n"
+
+    for i in range(start_idx, end_idx):
+        user = users[i]
+
+        # Безопасное извлечение данных
+        username = user[1] if len(user) > 1 else "Unknown"
+        created_by_username = user[3] if len(user) > 3 else "Неизвестно"
+        created_at = user[4] if len(user) > 4 else ""
+        total_conn = user[5] if len(user) > 5 else 0
+        last_conn = user[6] if len(user) > 6 else ""
+        sent = user[7] if len(user) > 7 else 0
+        received = user[8] if len(user) > 8 else 0
+        is_active = user[9] if len(user) > 9 else 0
+
+        status = "🟢" if is_active else "⚪"
+        user_list += f"{status} {username}\n"
+        user_list += f"   Создан: {created_at[:10] if created_at else 'Неизвестно'} администратором {created_by_username}\n"
+        if total_conn > 0:
+            total_traffic = sent + received
+            user_list += f"   Подключений: {total_conn}, трафик: {format_bytes(total_traffic)}\n"
+        user_list += "\n"
+
+    user_list += f"Всего пользователей: {len(users)}"
+
+    # Создаем кнопки навигации
+    markup = types.InlineKeyboardMarkup()
+    buttons = []
+
+    if page > 0:
+        buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'listusers_prev_{page - 1}'))
+
+    if page < total_pages - 1:
+        buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'listusers_next_{page + 1}'))
+
+    if buttons:
+        markup.row(*buttons)
+
+    # Кнопка обновления
+    markup.row(types.InlineKeyboardButton("🔄 Обновить", callback_data='listusers_refresh'))
+
+    try:
+        if edit_message_id:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=edit_message_id,
+                text=user_list,
+                reply_markup=markup
+            )
+        else:
+            bot.send_message(chat_id, user_list, reply_markup=markup)
+
+        # Если есть callback_query_id, отвечаем на него
+        if callback_query_id:
+            bot.answer_callback_query(callback_query_id)
+
+    except telebot.apihelper.ApiTelegramException as e:
+        error_msg = str(e)
+        if "message is not modified" in error_msg:
+            # Это нормально - пользователь нажал на ту же самую кнопку
+            if callback_query_id:
+                try:
+                    bot.answer_callback_query(callback_query_id)
+                except:
+                    pass  # Игнорируем ошибку устаревшего callback
+        elif "query is too old" in error_msg or "query ID is invalid" in error_msg:
+            # Игнорируем устаревшие callback queries
+            pass
+        else:
+            logger.error(f"Ошибка Telegram API: {e}")
+            # Попробуем отправить новое сообщение
+            if not edit_message_id:  # Только если не пытались редактировать
+                bot.send_message(chat_id, user_list, reply_markup=markup)
+    except Exception as e:
+        logger.error(f"Ошибка при отображении страницы: {e}")
+        if not edit_message_id:  # Только если не пытались редактировать
+            bot.send_message(chat_id, "⚠️ Ошибка при отображении данных")

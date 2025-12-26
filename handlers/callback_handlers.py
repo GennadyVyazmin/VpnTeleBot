@@ -27,38 +27,87 @@ def setup_callback_handlers(bot):
         action = call.data.replace('start_', '')
 
         if action == 'adduser':
+            # Создаем временное сообщение для вызова add_user
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.user_handlers import add_user
-            add_user(call.message)
+            add_user(fake_message)
 
         elif action == 'listusers':
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.user_handlers import list_users
-            list_users(call.message)
+            list_users(fake_message)
 
         elif action == 'stats':
-            from handlers.user_handlers import show_stats
-            show_stats(call.message)
+            # Вместо импорта функции, выполняем код напрямую
+            show_stats_directly(bot, call)
 
         elif action == 'userstats':
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.user_handlers import user_stats
-            user_stats(call.message)
+            user_stats(fake_message)
 
         elif action == 'activestats':
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.user_handlers import show_active_stats
-            show_active_stats(call.message)
+            show_active_stats(fake_message)
 
         elif action == 'admin':
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.admin_handlers import admin_panel
-            admin_panel(call.message)
+            admin_panel(fake_message)
 
         elif action == 'manage_admins':
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.admin_handlers import manage_admins
-            manage_admins(call.message)
+            manage_admins(fake_message)
 
         elif action == 'deleteuser':
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.admin_handlers import delete_user
-            delete_user(call.message)
+            delete_user(fake_message)
 
         bot.answer_callback_query(call.id, "⚡ Выполняем...")
+
+    def show_stats_directly(bot, call):
+        """Прямой показ статистики без импорта"""
+        user_id = call.from_user.id
+
+        if not db.is_admin(user_id):
+            return
+
+        from traffic_monitor import traffic_monitor
+        from datetime import datetime
+
+        total_users = db.get_user_count()
+        active_users = db.get_active_users_count()
+
+        # Получаем свежие данные
+        traffic_data = traffic_monitor.parse_ipsec_status()
+
+        stats_text = f"""📊 Статистика VPN сервера
+
+👥 Всего пользователей: {total_users}
+🟢 Активных в БД: {active_users}
+🔌 Активных в ipsec: {len(traffic_data)}
+
+⏱️  Мониторинг: каждые {Config.STATS_UPDATE_INTERVAL} сек
+📁 Директория конфигов: {Config.VPN_PROFILES_PATH}
+🕒 Время сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+        if traffic_data:
+            stats_text += "\n\n🔍 Активные подключения:"
+            for username, info in list(traffic_data.items())[:5]:
+                traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
+                stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
+
+        bot.send_message(call.message.chat.id, stats_text)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('platform_'))
     def handle_platform_selection(call):
@@ -165,8 +214,8 @@ def setup_callback_handlers(bot):
         action = call.data
 
         if action == 'admin_stats':
-            from handlers.user_handlers import show_stats
-            show_stats(call.message)
+            # Используем нашу прямую функцию
+            show_stats_directly(bot, call)
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
@@ -202,14 +251,19 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📋 Список бэкапов")
 
         elif action == 'admin_clear_db':
+            # Создаем временное сообщение
+            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                   'from_user': call.from_user})
             from handlers.admin_handlers import clear_database
-            clear_database(call.message)
+            clear_database(fake_message)
             bot.answer_callback_query(call.id, "🧹 Подтвердите очистку")
 
         elif action == 'admin_manage':
             if db.is_super_admin(user_id):
+                fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
+                                                       'from_user': call.from_user})
                 from handlers.admin_handlers import manage_admins
-                manage_admins(call.message)
+                manage_admins(fake_message)
                 bot.answer_callback_query(call.id, "👑 Управление админами")
             else:
                 bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
@@ -467,31 +521,72 @@ def setup_callback_handlers(bot):
 
         bot.answer_callback_query(call.id)
 
-    @bot.callback_query_handler(func=lambda call: call.data == 'listusers_refresh')
-    def handle_listusers_refresh(call):
-        """Обработчик обновления списка пользователей"""
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('listusers_'))
+    def handle_listusers_callback(call):
+        """Обработчик навигации по списку пользователей"""
         chat_id = call.message.chat.id
         message_id = call.message.message_id
+        callback_id = call.id
+
+        # Импортируем здесь, чтобы избежать циклического импорта
+        from handlers.user_handlers import list_users_pages, show_list_users_page
 
         if chat_id not in list_users_pages:
-            bot.answer_callback_query(call.id, "Используйте /listusers снова")
+            try:
+                bot.answer_callback_query(callback_id, "Данные устарели. Используйте /listusers снова")
+            except:
+                pass
             return
 
-        # Обновляем данные
-        users = db.get_all_users()
-        if users:
-            current_page = list_users_pages[chat_id]['page']
-            list_users_pages[chat_id]['users'] = users
-            total_pages = (len(users) + list_users_pages[chat_id]['page_size'] - 1) // list_users_pages[chat_id][
-                'page_size']
-            if current_page >= total_pages:
-                list_users_pages[chat_id]['page'] = max(0, total_pages - 1)
+        try:
+            # Обрабатываем разные типы callback
+            if call.data.startswith('listusers_prev_'):
+                try:
+                    page = int(call.data.split('_')[2])
+                    list_users_pages[chat_id]['page'] = max(0, page)
+                except:
+                    list_users_pages[chat_id]['page'] = max(0, list_users_pages[chat_id]['page'] - 1)
 
-            # Показываем обновленную страницу
-            from handlers.user_handlers import show_list_users_page
-            show_list_users_page(bot, chat_id, message_id, call.id)
-        else:
-            bot.answer_callback_query(call.id, "📭 Нет пользователей")
+            elif call.data.startswith('listusers_next_'):
+                try:
+                    page = int(call.data.split('_')[2])
+                    total_pages = (len(list_users_pages[chat_id]['users']) +
+                                   list_users_pages[chat_id]['page_size'] - 1) // list_users_pages[chat_id]['page_size']
+                    list_users_pages[chat_id]['page'] = min(total_pages - 1, page)
+                except:
+                    list_users_pages[chat_id]['page'] += 1
+
+            elif call.data == 'listusers_refresh':
+                # Обновляем данные
+                users = db.get_all_users()
+                if users:
+                    current_page = list_users_pages[chat_id]['page']
+                    list_users_pages[chat_id]['users'] = users
+                    # Проверяем, чтобы страница не вышла за пределы
+                    total_pages = (len(users) + list_users_pages[chat_id]['page_size'] - 1) // \
+                                  list_users_pages[chat_id]['page_size']
+                    if current_page >= total_pages:
+                        list_users_pages[chat_id]['page'] = max(0, total_pages - 1)
+
+                    # Показываем обновленную страницу
+                    show_list_users_page(bot, chat_id, message_id, callback_id)
+                    return
+                else:
+                    try:
+                        bot.answer_callback_query(callback_id, "📭 Нет пользователей")
+                    except:
+                        pass
+                    return
+
+            # Показываем страницу
+            show_list_users_page(bot, chat_id, message_id, callback_id)
+
+        except Exception as e:
+            logger.error(f"Ошибка обработки callback: {e}")
+            try:
+                bot.answer_callback_query(callback_id, "⚠️ Ошибка обработки")
+            except:
+                pass
 
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -761,7 +856,3 @@ def send_windows_profile(bot, call, username):
     except Exception as e:
         logger.error(f"Ошибка при отправке дополнительных файлов Windows: {e}")
         bot.send_message(call.message.chat.id, "⚠️ Не удалось отправить дополнительные файлы конфигурации")
-
-
-# Импортируем глобальную переменную из user_handlers
-from handlers.user_handlers import list_users_pages
