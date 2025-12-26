@@ -572,6 +572,3 @@ def setup_user_handlers(bot):
                     bot.send_message(message.chat.id, f"```{part}```", parse_mode='Markdown')
         else:
             bot.send_message(message.chat.id, f"```{debug_text}```", parse_mode='Markdown')
-
-
-[file content end]
