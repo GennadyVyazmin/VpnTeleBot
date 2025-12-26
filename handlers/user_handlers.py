@@ -584,42 +584,7 @@ def setup_user_handlers(bot):
         else:
             bot.send_message(message.chat.id, f"```{debug_text}```", parse_mode='Markdown')
 
-    @bot.message_handler(commands=['resettrafficcounter'])
-    def reset_traffic_counter(message):
-        """Сбросить счетчики трафика (для тестирования)"""
-        user_id = message.from_user.id
 
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /resettrafficcounter от администратора {user_id}")
-
-        # Получаем имя пользователя если указано
-        text = message.text.strip()
-        parts = text.split()
-
-        if len(parts) > 1:
-            username = parts[1]
-            if traffic_monitor.reset_traffic_counter(username):
-                bot.send_message(message.chat.id, f"✅ Счетчики трафика сброшены для пользователя {username}")
-            else:
-                bot.send_message(message.chat.id, f"❌ Ошибка сброса счетчиков для {username}")
-        else:
-            # Сброс всех счетчиков
-            buttons = [
-                [types.InlineKeyboardButton("✅ Сбросить ВСЕ счетчики", callback_data='reset_all_counters')],
-                [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_reset_counters')]
-            ]
-            markup = types.InlineKeyboardMarkup(buttons)
-
-            bot.send_message(
-                message.chat.id,
-                "⚠️ Сбросить все счетчики трафика?\n\n"
-                "Это приведет к тому, что текущие абсолютные значения из ipsec станут базовыми.\n"
-                "Следующее обновление будет считать трафик от новых базовых значений.",
-                reply_markup=markup
-            )
 
 
 def show_platform_selector(bot, chat_id, username):

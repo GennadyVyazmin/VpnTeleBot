@@ -1,3 +1,4 @@
+import os
 import telebot
 import logging
 import subprocess
@@ -455,3 +456,31 @@ def send_windows_profile(bot, call, username):
             bot.send_document(call.message.chat.id, file, caption="Windows сертификат")
     else:
         bot.send_message(call.message.chat.id, f"❌ Файл Windows сертификат не найден")
+
+    # Отправка дополнительных файлов из /root
+    try:
+        # Файл 1: Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg
+        reg_file_path = "/root/Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg"
+        if os.path.exists(reg_file_path):
+            with open(reg_file_path, 'rb') as reg_file:
+                bot.send_document(call.message.chat.id, reg_file,
+                                  caption="Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg\n\n"
+                                          "Этот файл реестра включает более сильные шифры для IKEv2 в Windows.\n"
+                                          "Просто запустите его двойным кликом и согласитесь с изменениями.")
+        else:
+            logger.warning(f"Файл {reg_file_path} не найден")
+
+        # Файл 2: ikev2_config_import.cmd
+        cmd_file_path = "/root/ikev2_config_import.cmd"
+        if os.path.exists(cmd_file_path):
+            with open(cmd_file_path, 'rb') as cmd_file:
+                bot.send_document(call.message.chat.id, cmd_file,
+                                  caption="ikev2_config_import.cmd\n\n"
+                                          "Этот командный файл импортирует конфигурацию VPN в Windows.\n"
+                                          "Запустите его от имени администратора (правый клик -> Запуск от имени администратора).")
+        else:
+            logger.warning(f"Файл {cmd_file_path} не найден")
+
+    except Exception as e:
+        logger.error(f"Ошибка при отправке дополнительных файлов Windows: {e}")
+        bot.send_message(call.message.chat.id, "⚠️ Не удалось отправить дополнительные файлы конфигурации")
