@@ -1,3 +1,5 @@
+[file name]: main.py
+[file content begin]
 import os
 import sys
 import atexit
@@ -85,6 +87,9 @@ def main():
     # Инициализация бота
     bot = telebot.TeleBot(Config.BOT_TOKEN)
 
+    # Импортируем здесь, чтобы избежать циклического импорта
+    from handlers.user_handlers import user_states
+
     # Настройка обработчиков
     setup_user_handlers(bot)
     setup_admin_handlers(bot)
@@ -94,6 +99,24 @@ def main():
     @bot.message_handler(func=lambda message: True)
     def handle_unknown(message):
         user_id = message.from_user.id
+
+        # Проверяем, не находится ли пользователь в процессе ввода
+        if user_id in user_states:
+            state = user_states[user_id]
+
+            if state.get('waiting_for_username'):
+                # Пользователь вводит имя - обрабатываем в user_handlers
+                from handlers.user_handlers import process_username_step
+                process_username_step(bot, message)
+                return
+
+            elif state.get('waiting_for_admin_id'):
+                # Пользователь вводит ID админа
+                from handlers.callback_handlers import process_add_admin_manual
+                process_add_admin_manual(message, bot)
+                return
+
+        # Если не в состоянии ожидания ввода, показываем сообщение
         logger.info(f"Неизвестная команда от {user_id}: {message.text}")
 
         if db.is_admin(user_id):
@@ -138,3 +161,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+[file content end]
