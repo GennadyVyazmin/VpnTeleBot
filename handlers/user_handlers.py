@@ -196,6 +196,182 @@ def show_list_users_page(bot, chat_id, edit_message_id=None, callback_query_id=N
             bot.send_message(chat_id, "⚠️ Ошибка при отображении данных")
 
 
+# Функции-обработчики (должны быть глобальными для импорта)
+def list_users(message):
+    """Обработчик команды /listusers"""
+    from handlers.user_handlers import list_users_pages, show_list_users_page
+    import sys
+    # Импортируем бота из main
+    from main import bot
+
+    user_id = message.from_user.id
+
+    if not db.is_admin(user_id):
+        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+        return
+
+    logger.info(f"Команда /listusers от администратора {user_id}")
+
+    users = db.get_all_users()
+
+    if not users:
+        bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
+        return
+
+    # Сохраняем данные для пагинации
+    chat_id = message.chat.id
+    list_users_pages[chat_id] = {
+        'users': users,
+        'page': 0,
+        'page_size': 15  # Пользователей на страницу
+    }
+
+    # Показываем первую страницу
+    show_list_users_page(bot, chat_id)
+
+
+def show_stats(message):
+    """Обработчик команды /stats"""
+    from main import bot
+
+    user_id = message.from_user.id
+
+    if not db.is_admin(user_id):
+        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+        return
+
+    logger.info(f"Команда /stats от администратора {user_id}")
+
+    total_users = db.get_user_count()
+    active_users = db.get_active_users_count()
+
+    # Получаем свежие данные
+    traffic_data = traffic_monitor.parse_ipsec_status()
+
+    stats_text = f"""📊 Статистика VPN сервера
+
+👥 Всего пользователей: {total_users}
+🟢 Активных в БД: {active_users}
+🔌 Активных в ipsec: {len(traffic_data)}
+
+⏱️  Мониторинг: каждые {Config.STATS_UPDATE_INTERVAL} сек
+📁 Директория конфигов: {Config.VPN_PROFILES_PATH}
+🕒 Время сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+    if traffic_data:
+        stats_text += "\n\n🔍 Активные подключения:"
+        for username, info in list(traffic_data.items())[:5]:
+            traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
+            stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
+
+    bot.send_message(message.chat.id, stats_text)
+
+
+def user_stats(message):
+    """Обработчик команды /userstats"""
+    from main import bot
+
+    user_id = message.from_user.id
+
+    if not db.is_admin(user_id):
+        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+        return
+
+    logger.info(f"Команда /userstats от администратора {user_id}")
+
+    users = db.get_all_users()
+    if not users:
+        bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
+        return
+
+    # Создаем пагинированный список кнопок
+    buttons_per_page = 10
+    total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
+    page = 0  # Можно добавить навигацию по страницам
+
+    start_idx = page * buttons_per_page
+    end_idx = min(start_idx + buttons_per_page, len(users))
+
+    # Создаем кнопки пользователей
+    buttons = []
+    for i in range(start_idx, end_idx):
+        user = users[i]
+        if len(user) >= 2:
+            username = user[1]
+            is_active = user[9] if len(user) > 9 else 0
+            status = "🟢" if is_active else "⚪"
+            buttons.append([types.InlineKeyboardButton(
+                f"{status} {username}",
+                callback_data=f'userstats_{username}'
+            )])
+
+    # Добавляем кнопки навигации если есть больше одной страницы
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'userstats_page_{page - 1}'))
+        if page < total_pages - 1:
+            nav_buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'userstats_page_{page + 1}'))
+
+        if nav_buttons:
+            buttons.append(nav_buttons)
+
+    # Кнопка обновления списка
+    buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
+
+    markup = types.InlineKeyboardMarkup(buttons)
+    bot.send_message(
+        message.chat.id,
+        f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+        reply_markup=markup
+    )
+
+
+def show_active_stats(message):
+    """Обработчик команды /activestats"""
+    from main import bot
+
+    user_id = message.from_user.id
+
+    if not db.is_admin(user_id):
+        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+        return
+
+    logger.info(f"Команда /activestats от администратора {user_id}")
+
+    traffic_data = traffic_monitor.parse_ipsec_status()
+
+    if not traffic_data:
+        bot.send_message(message.chat.id, "📭 Нет активных подключений")
+        return
+
+    stats_text = "🟢 Активные подключения (из ipsec):\n\n"
+
+    for username, data in traffic_data.items():
+        total_traffic = (data['absolute_sent'] + data['absolute_received']) / (1024 ** 2)  # MB
+
+        stats_text += f"👤 {username}\n"
+        stats_text += f"   IP: {data['client_ip']}\n"
+        stats_text += f"   ID: {data['connection_id']}\n"
+        stats_text += f"   Абсолютные значения:\n"
+        stats_text += f"     • Отправлено: {data['absolute_sent'] / 1024 / 1024:.1f} MB\n"
+        stats_text += f"     • Получено: {data['absolute_received'] / 1024 / 1024:.1f} MB\n"
+        stats_text += f"   Всего: {total_traffic:.2f} MB\n\n"
+
+    stats_text += f"Всего активных: {len(traffic_data)}"
+
+    # Защита от слишком длинных сообщений
+    if len(stats_text) > 4000:
+        parts = split_message(stats_text)
+        for i, part in enumerate(parts):
+            if i == 0:
+                bot.send_message(message.chat.id, part)
+            else:
+                bot.send_message(message.chat.id, f"`{part}`", parse_mode='Markdown')
+    else:
+        bot.send_message(message.chat.id, stats_text)
+
+
 def setup_user_handlers(bot):
     """Настройка обработчиков команд пользователя"""
 
@@ -267,65 +443,12 @@ def setup_user_handlers(bot):
         )
 
     @bot.message_handler(commands=['listusers'])
-    def list_users(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /listusers от администратора {user_id}")
-
-        users = db.get_all_users()
-
-        if not users:
-            bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
-            return
-
-        # Сохраняем данные для пагинации
-        chat_id = message.chat.id
-        list_users_pages[chat_id] = {
-            'users': users,
-            'page': 0,
-            'page_size': 15  # Пользователей на страницу
-        }
-
-        # Показываем первую страницу
-        show_list_users_page(bot, chat_id)
+    def list_users_handler(message):
+        list_users(message)
 
     @bot.message_handler(commands=['stats'])
-    def show_stats(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /stats от администратора {user_id}")
-
-        total_users = db.get_user_count()
-        active_users = db.get_active_users_count()
-
-        # Получаем свежие данные
-        traffic_data = traffic_monitor.parse_ipsec_status()
-
-        stats_text = f"""📊 Статистика VPN сервера
-
-👥 Всего пользователей: {total_users}
-🟢 Активных в БД: {active_users}
-🔌 Активных в ipsec: {len(traffic_data)}
-
-⏱️  Мониторинг: каждые {Config.STATS_UPDATE_INTERVAL} сек
-📁 Директория конфигов: {Config.VPN_PROFILES_PATH}
-🕒 Время сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
-
-        if traffic_data:
-            stats_text += "\n\n🔍 Активные подключения:"
-            for username, info in list(traffic_data.items())[:5]:
-                traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
-                stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
-
-        bot.send_message(message.chat.id, stats_text)
+    def show_stats_handler(message):
+        show_stats(message)
 
     @bot.message_handler(commands=['syncstats'])
     def sync_stats(message):
@@ -350,103 +473,12 @@ def setup_user_handlers(bot):
             bot.send_message(message.chat.id, "ℹ️ Активных подключений не найдено")
 
     @bot.message_handler(commands=['activestats'])
-    def show_active_stats(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /activestats от администратора {user_id}")
-
-        traffic_data = traffic_monitor.parse_ipsec_status()
-
-        if not traffic_data:
-            bot.send_message(message.chat.id, "📭 Нет активных подключений")
-            return
-
-        stats_text = "🟢 Активные подключения (из ipsec):\n\n"
-
-        for username, data in traffic_data.items():
-            total_traffic = (data['absolute_sent'] + data['absolute_received']) / (1024 ** 2)  # MB
-
-            stats_text += f"👤 {username}\n"
-            stats_text += f"   IP: {data['client_ip']}\n"
-            stats_text += f"   ID: {data['connection_id']}\n"
-            stats_text += f"   Абсолютные значения:\n"
-            stats_text += f"     • Отправлено: {data['absolute_sent'] / 1024 / 1024:.1f} MB\n"
-            stats_text += f"     • Получено: {data['absolute_received'] / 1024 / 1024:.1f} MB\n"
-            stats_text += f"   Всего: {total_traffic:.2f} MB\n\n"
-
-        stats_text += f"Всего активных: {len(traffic_data)}"
-
-        # Защита от слишком длинных сообщений
-        if len(stats_text) > 4000:
-            parts = split_message(stats_text)
-            for i, part in enumerate(parts):
-                if i == 0:
-                    bot.send_message(message.chat.id, part)
-                else:
-                    bot.send_message(message.chat.id, f"`{part}`", parse_mode='Markdown')
-        else:
-            bot.send_message(message.chat.id, stats_text)
+    def show_active_stats_handler(message):
+        show_active_stats(message)
 
     @bot.message_handler(commands=['userstats'])
-    def user_stats(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /userstats от администратора {user_id}")
-
-        users = db.get_all_users()
-        if not users:
-            bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
-            return
-
-        # Создаем пагинированный список кнопок
-        buttons_per_page = 10
-        total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
-        page = 0  # Можно добавить навигацию по страницам
-
-        start_idx = page * buttons_per_page
-        end_idx = min(start_idx + buttons_per_page, len(users))
-
-        # Создаем кнопки пользователей
-        buttons = []
-        for i in range(start_idx, end_idx):
-            user = users[i]
-            if len(user) >= 2:
-                username = user[1]
-                is_active = user[9] if len(user) > 9 else 0
-                status = "🟢" if is_active else "⚪"
-                buttons.append([types.InlineKeyboardButton(
-                    f"{status} {username}",
-                    callback_data=f'userstats_{username}'
-                )])
-
-        # Добавляем кнопки навигации если есть больше одной страницы
-        if total_pages > 1:
-            nav_buttons = []
-            if page > 0:
-                nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'userstats_page_{page - 1}'))
-            if page < total_pages - 1:
-                nav_buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'userstats_page_{page + 1}'))
-
-            if nav_buttons:
-                buttons.append(nav_buttons)
-
-        # Кнопка обновления списка
-        buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
-
-        markup = types.InlineKeyboardMarkup(buttons)
-        bot.send_message(
-            message.chat.id,
-            f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
-            reply_markup=markup
-        )
+    def user_stats_handler(message):
+        user_stats(message)
 
     @bot.message_handler(commands=['traffic'])
     def traffic_stats(message):
@@ -539,7 +571,7 @@ def setup_user_handlers(bot):
             bot.send_message(message.chat.id, "📭 Нет активных подключений")
             return
 
-        debug_text = "🔧 Отладочная информация о трафике:\n\n"
+        debug_text = "🔧 Отладочная информация о трафика:\n\n"
 
         for username, data in traffic_data.items():
             debug_text += f"👤 {username}:\n"

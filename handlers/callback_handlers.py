@@ -5,8 +5,10 @@ import subprocess
 from telebot import types
 from database import db
 from vpn_manager import vpn_manager
-from utils import format_traffic_stats, get_backup_info_text
+from utils import format_traffic_stats, get_backup_info_text, format_bytes
 from config import Config
+from traffic_monitor import traffic_monitor
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -39,130 +41,208 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "⚡ Введите имя пользователя")
 
         elif action == 'listusers':
-            # Создаем fake message для вызова обработчика
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/listusers'
+            # Выводим список пользователей напрямую
+            users = db.get_all_users()
+            if not users:
+                bot.send_message(call.message.chat.id, "📭 В базе данных нет пользователей")
+                bot.answer_callback_query(call.id, "📭 Нет пользователей")
+                return
 
-            fake_msg = FakeMessage()
-
-            # Вызываем обработчик list_users из user_handlers напрямую
-            from handlers.user_handlers import setup_user_handlers
-
-            # Получаем обработчик list_users из зарегистрированных
-            for handler in bot.message_handlers:
-                if hasattr(handler, '__name__') and handler.__name__ == 'list_users':
-                    handler(fake_msg)
-                    break
-            else:
-                # Если не нашли, вызываем через импорт функции
-                from handlers.user_handlers import list_users as list_users_func
-                list_users_func(fake_msg)
-
+            # Используем функцию из user_handlers
+            from handlers.user_handlers import list_users_pages, show_list_users_page
+            chat_id = call.message.chat.id
+            list_users_pages[chat_id] = {
+                'users': users,
+                'page': 0,
+                'page_size': 15
+            }
+            show_list_users_page(bot, chat_id)
             bot.answer_callback_query(call.id, "⚡ Список пользователей")
 
         elif action == 'stats':
-            # Создаем fake message для вызова обработчика
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/stats'
+            # Выводим статистику напрямую
+            total_users = db.get_user_count()
+            active_users = db.get_active_users_count()
+            traffic_data = traffic_monitor.parse_ipsec_status()
 
-            fake_msg = FakeMessage()
+            stats_text = f"""📊 Статистика VPN сервера
 
-            # Вызываем обработчик show_stats из user_handlers
-            for handler in bot.message_handlers:
-                if hasattr(handler, '__name__') and handler.__name__ == 'show_stats':
-                    handler(fake_msg)
-                    break
-            else:
-                # Если не нашли, импортируем модуль и вызываем функцию
-                import handlers.user_handlers
-                handlers.user_handlers.show_stats(fake_msg)
+👥 Всего пользователей: {total_users}
+🟢 Активных в БД: {active_users}
+🔌 Активных в ipsec: {len(traffic_data)}
 
+⏱️  Мониторинг: каждые {Config.STATS_UPDATE_INTERVAL} сек
+📁 Директория конфигов: {Config.VPN_PROFILES_PATH}
+🕒 Время сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+            if traffic_data:
+                stats_text += "\n\n🔍 Активные подключения:"
+                for username, info in list(traffic_data.items())[:5]:
+                    traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
+                    stats_text += f"\n• {username}: {traffic_mb:.1f} MB"
+
+            bot.send_message(call.message.chat.id, stats_text)
             bot.answer_callback_query(call.id, "⚡ Статистика сервера")
 
         elif action == 'userstats':
-            # Создаем fake message для вызова обработчика
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/userstats'
+            # Создаем список пользователей для выбора статистики
+            users = db.get_all_users()
+            if not users:
+                bot.send_message(call.message.chat.id, "📭 В базе данных нет пользователей")
+                bot.answer_callback_query(call.id, "📭 Нет пользователей")
+                return
 
-            fake_msg = FakeMessage()
+            # Показываем первую страницу
+            buttons_per_page = 10
+            total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
+            page = 0
+            start_idx = page * buttons_per_page
+            end_idx = min(start_idx + buttons_per_page, len(users))
 
-            # Вызываем обработчик user_stats из user_handlers
-            for handler in bot.message_handlers:
-                if hasattr(handler, '__name__') and handler.__name__ == 'user_stats':
-                    handler(fake_msg)
-                    break
-            else:
-                # Если не нашли, импортируем модуль и вызываем функцию
-                import handlers.user_handlers
-                handlers.user_handlers.user_stats(fake_msg)
+            buttons = []
+            for i in range(start_idx, end_idx):
+                user = users[i]
+                if len(user) >= 2:
+                    username = user[1]
+                    is_active = user[9] if len(user) > 9 else 0
+                    status = "🟢" if is_active else "⚪"
+                    buttons.append([types.InlineKeyboardButton(
+                        f"{status} {username}",
+                        callback_data=f'userstats_{username}'
+                    )])
 
+            if total_pages > 1:
+                nav_buttons = []
+                if page > 0:
+                    nav_buttons.append(
+                        types.InlineKeyboardButton("⬅️ Назад", callback_data=f'userstats_page_{page - 1}'))
+                if page < total_pages - 1:
+                    nav_buttons.append(
+                        types.InlineKeyboardButton("Вперед ➡️", callback_data=f'userstats_page_{page + 1}'))
+
+                if nav_buttons:
+                    buttons.append(nav_buttons)
+
+            buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(
+                call.message.chat.id,
+                f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+                reply_markup=markup
+            )
             bot.answer_callback_query(call.id, "⚡ Статистика пользователей")
 
         elif action == 'activestats':
-            # Создаем fake message для вызова обработчика
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/activestats'
+            # Выводим активные подключения напрямую
+            traffic_data = traffic_monitor.parse_ipsec_status()
 
-            fake_msg = FakeMessage()
+            if not traffic_data:
+                bot.send_message(call.message.chat.id, "📭 Нет активных подключений")
+                bot.answer_callback_query(call.id, "📭 Нет активных подключений")
+                return
 
-            # Вызываем обработчик show_active_stats из user_handlers
-            for handler in bot.message_handlers:
-                if hasattr(handler, '__name__') and handler.__name__ == 'show_active_stats':
-                    handler(fake_msg)
-                    break
+            stats_text = "🟢 Активные подключения (из ipsec):\n\n"
+
+            for username, data in traffic_data.items():
+                total_traffic = (data['absolute_sent'] + data['absolute_received']) / (1024 ** 2)  # MB
+                stats_text += f"👤 {username}\n"
+                stats_text += f"   IP: {data['client_ip']}\n"
+                stats_text += f"   ID: {data['connection_id']}\n"
+                stats_text += f"   Абсолютные значения:\n"
+                stats_text += f"     • Отправлено: {data['absolute_sent'] / 1024 / 1024:.1f} MB\n"
+                stats_text += f"     • Получено: {data['absolute_received'] / 1024 / 1024:.1f} MB\n"
+                stats_text += f"   Всего: {total_traffic:.2f} MB\n\n"
+
+            stats_text += f"Всего активных: {len(traffic_data)}"
+
+            if len(stats_text) > 4000:
+                parts = [stats_text[i:i + 4000] for i in range(0, len(stats_text), 4000)]
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        bot.send_message(call.message.chat.id, part)
+                    else:
+                        bot.send_message(call.message.chat.id, f"`{part}`", parse_mode='Markdown')
             else:
-                # Если не нашли, импортируем модуль и вызываем функцию
-                import handlers.user_handlers
-                handlers.user_handlers.show_active_stats(fake_msg)
-
+                bot.send_message(call.message.chat.id, stats_text)
             bot.answer_callback_query(call.id, "⚡ Активные подключения")
 
         elif action == 'admin':
-            from handlers.admin_handlers import admin_panel
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/admin'
+            # Открываем панель администратора
+            if db.is_super_admin(user_id):
+                buttons = [
+                    [types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
+                    [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
+                    [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
+                    [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')],
+                    [types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
+                    [types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
+                ]
+            else:
+                buttons = [
+                    [types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
+                    [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
+                    [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
+                    [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')]
+                ]
 
-            fake_msg = FakeMessage()
-            admin_panel(fake_msg)
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(call.message.chat.id, "👨‍💻 Панель администратора", reply_markup=markup)
             bot.answer_callback_query(call.id, "⚡ Панель администратора")
 
         elif action == 'manage_admins':
-            from handlers.admin_handlers import manage_admins
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/manage_admins'
-
-            fake_msg = FakeMessage()
-            manage_admins(fake_msg)
-            bot.answer_callback_query(call.id, "⚡ Управление админами")
+            if db.is_super_admin(user_id):
+                buttons = [
+                    [types.InlineKeyboardButton("👥 Список админов", callback_data='admin_list')],
+                    [types.InlineKeyboardButton("➕ Добавить админа", callback_data='admin_add')],
+                    [types.InlineKeyboardButton("➖ Удалить админа", callback_data='admin_remove')]
+                ]
+                markup = types.InlineKeyboardMarkup(buttons)
+                bot.send_message(call.message.chat.id, "👑 Управление администраторами", reply_markup=markup)
+                bot.answer_callback_query(call.id, "⚡ Управление админами")
+            else:
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
 
         elif action == 'deleteuser':
-            from handlers.admin_handlers import delete_user
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/deleteuser'
+            # Показываем список пользователей для удаления
+            if db.is_super_admin(user_id):
+                users = db.get_all_users()
+            else:
+                # Получаем только своих пользователей
+                users = []
+                all_users = db.get_all_users()
+                for user in all_users:
+                    if len(user) >= 3 and user[2] == user_id:  # created_by
+                        users.append(user)
 
-            fake_msg = FakeMessage()
-            delete_user(fake_msg)
+            if not users:
+                if db.is_super_admin(user_id):
+                    bot.send_message(call.message.chat.id, "❌ В базе данных нет пользователей для удаления")
+                else:
+                    bot.send_message(call.message.chat.id, "❌ У вас нет созданных пользователей для удаления")
+                bot.answer_callback_query(call.id, "❌ Нет пользователей")
+                return
+
+            buttons = []
+            for user in users:
+                if len(user) >= 2:
+                    username = user[1]
+                    if db.is_super_admin(user_id) and len(user) >= 4:
+                        created_by_username = user[3]
+                        button_text = f"🗑️ {username} (создал: {created_by_username})"
+                    else:
+                        button_text = f"🗑️ {username}"
+
+                    buttons.append([types.InlineKeyboardButton(
+                        button_text,
+                        callback_data=f'delete_{username}'
+                    )])
+
+            markup = types.InlineKeyboardMarkup(buttons)
+            if db.is_super_admin(user_id):
+                bot.send_message(call.message.chat.id, "Выберите пользователя для удаления:", reply_markup=markup)
+            else:
+                bot.send_message(call.message.chat.id, "Выберите пользователя для удаления (только ваши пользователи):",
+                                 reply_markup=markup)
             bot.answer_callback_query(call.id, "⚡ Удаление пользователя")
 
     # ========== ОБРАБОТЧИКИ ПАГИНАЦИИ ДЛЯ USERSTATS ==========
@@ -255,18 +335,58 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
             return
 
-        # Создаем fake message для вызова обработчика
-        class FakeMessage:
-            def __init__(self):
-                self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                self.from_user = call.from_user
-                self.text = '/userstats'
+        # Обновляем список пользователей
+        users = db.get_all_users()
+        if not users:
+            bot.send_message(call.message.chat.id, "📭 В базе данных нет пользователей")
+            bot.answer_callback_query(call.id, "📭 Нет пользователей")
+            return
 
-        fake_msg = FakeMessage()
+        # Показываем первую страницу
+        buttons_per_page = 10
+        total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
+        page = 0
+        start_idx = page * buttons_per_page
+        end_idx = min(start_idx + buttons_per_page, len(users))
 
-        # Вызываем обработчик user_stats из user_handlers
-        import handlers.user_handlers
-        handlers.user_handlers.user_stats(fake_msg)
+        buttons = []
+        for i in range(start_idx, end_idx):
+            user = users[i]
+            if len(user) >= 2:
+                username = user[1]
+                is_active = user[9] if len(user) > 9 else 0
+                status = "🟢" if is_active else "⚪"
+                buttons.append([types.InlineKeyboardButton(
+                    f"{status} {username}",
+                    callback_data=f'userstats_{username}'
+                )])
+
+        if total_pages > 1:
+            nav_buttons = []
+            if page > 0:
+                nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'userstats_page_{page - 1}'))
+            if page < total_pages - 1:
+                nav_buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'userstats_page_{page + 1}'))
+
+            if nav_buttons:
+                buttons.append(nav_buttons)
+
+        buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
+        markup = types.InlineKeyboardMarkup(buttons)
+
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+                reply_markup=markup
+            )
+        except Exception as e:
+            bot.send_message(
+                call.message.chat.id,
+                f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+                reply_markup=markup
+            )
 
         bot.answer_callback_query(call.id, "🔄 Список обновлен")
 
@@ -289,20 +409,21 @@ def setup_callback_handlers(bot):
 
             logger.info(f"Выбор платформы {platform} для {username} администратором {user_id}")
 
-            platform_handlers = {
-                'ios': send_ios_profile,
-                'sswan': send_sswan_profile,
-                'android': send_android_profile,
-                'macos': send_macos_profile,
-                'win': send_windows_profile
-            }
-
-            handler = platform_handlers.get(platform)
-            if handler:
-                handler(bot, call, username)
-                bot.answer_callback_query(call.id, f"📤 Отправляем конфиг для {platform}")
+            if platform == 'ios':
+                send_ios_profile(bot, call, username)
+            elif platform == 'sswan':
+                send_sswan_profile(bot, call, username)
+            elif platform == 'android':
+                send_android_profile(bot, call, username)
+            elif platform == 'macos':
+                send_macos_profile(bot, call, username)
+            elif platform == 'win':
+                send_windows_profile(bot, call, username)
             else:
                 bot.answer_callback_query(call.id, "❌ Неизвестная платформа")
+                return
+
+            bot.answer_callback_query(call.id, f"📤 Отправляем конфиг для {platform}")
 
         except Exception as e:
             logger.error(f"Ошибка обработки callback {call.data}: {str(e)}")
@@ -380,14 +501,8 @@ def setup_callback_handlers(bot):
         action = call.data
 
         if action == 'admin_stats':
-            # Прямой показ статистики
-            from traffic_monitor import traffic_monitor
-            from datetime import datetime
-
             total_users = db.get_user_count()
             active_users = db.get_active_users_count()
-
-            # Получаем свежие данные
             traffic_data = traffic_monitor.parse_ipsec_status()
 
             stats_text = f"""📊 Статистика VPN сервера
@@ -404,7 +519,7 @@ def setup_callback_handlers(bot):
                 stats_text += "\n\n🔍 Активные подключения:"
                 for username, info in list(traffic_data.items())[:5]:
                     traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
-                    stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
+                    stats_text += f"\n• {username}: {traffic_mb:.1f} MB"
 
             bot.send_message(call.message.chat.id, stats_text)
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
@@ -442,28 +557,34 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📋 Список бэкапов")
 
         elif action == 'admin_clear_db':
-            from handlers.admin_handlers import clear_database
-            class FakeMessage:
-                def __init__(self):
-                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                    self.from_user = call.from_user
-                    self.text = '/clear'
+            buttons = [
+                [types.InlineKeyboardButton("✅ Создать бэкап и очистить", callback_data='confirm_clear_with_backup')],
+                [types.InlineKeyboardButton("⚠️ Очистить без бэкапа", callback_data='confirm_clear_no_backup')],
+                [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_clear')]
+            ]
 
-            fake_msg = FakeMessage()
-            clear_database(fake_msg)
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(
+                call.message.chat.id,
+                "⚠️ Вы собираетесь очистить всю базу данных!\n\n"
+                "Это действие удалит:\n"
+                "• Всех пользователей\n"
+                "• Всю статистику трафика\n"
+                "• Все сессии\n\n"
+                "Выберите действие:",
+                reply_markup=markup
+            )
             bot.answer_callback_query(call.id, "🧹 Подтвердите очистку")
 
         elif action == 'admin_manage':
             if db.is_super_admin(user_id):
-                from handlers.admin_handlers import manage_admins
-                class FakeMessage:
-                    def __init__(self):
-                        self.chat = type('obj', (object,), {'id': call.message.chat.id})()
-                        self.from_user = call.from_user
-                        self.text = '/manage_admins'
-
-                fake_msg = FakeMessage()
-                manage_admins(fake_msg)
+                buttons = [
+                    [types.InlineKeyboardButton("👥 Список админов", callback_data='admin_list')],
+                    [types.InlineKeyboardButton("➕ Добавить админа", callback_data='admin_add')],
+                    [types.InlineKeyboardButton("➖ Удалить админа", callback_data='admin_remove')]
+                ]
+                markup = types.InlineKeyboardMarkup(buttons)
+                bot.send_message(call.message.chat.id, "👑 Управление администраторами", reply_markup=markup)
                 bot.answer_callback_query(call.id, "👑 Управление админами")
             else:
                 bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
