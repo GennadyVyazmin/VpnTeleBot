@@ -39,47 +39,94 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "⚡ Введите имя пользователя")
 
         elif action == 'listusers':
-            from handlers.user_handlers import list_users
+            # Создаем fake message для вызова обработчика
             class FakeMessage:
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/listusers'
 
             fake_msg = FakeMessage()
-            list_users(fake_msg)
+
+            # Вызываем обработчик list_users из user_handlers напрямую
+            from handlers.user_handlers import setup_user_handlers
+
+            # Получаем обработчик list_users из зарегистрированных
+            for handler in bot.message_handlers:
+                if hasattr(handler, '__name__') and handler.__name__ == 'list_users':
+                    handler(fake_msg)
+                    break
+            else:
+                # Если не нашли, вызываем через импорт функции
+                from handlers.user_handlers import list_users as list_users_func
+                list_users_func(fake_msg)
+
             bot.answer_callback_query(call.id, "⚡ Список пользователей")
 
         elif action == 'stats':
-            from handlers.user_handlers import show_stats
+            # Создаем fake message для вызова обработчика
             class FakeMessage:
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/stats'
 
             fake_msg = FakeMessage()
-            show_stats(fake_msg)
+
+            # Вызываем обработчик show_stats из user_handlers
+            for handler in bot.message_handlers:
+                if hasattr(handler, '__name__') and handler.__name__ == 'show_stats':
+                    handler(fake_msg)
+                    break
+            else:
+                # Если не нашли, импортируем модуль и вызываем функцию
+                import handlers.user_handlers
+                handlers.user_handlers.show_stats(fake_msg)
+
             bot.answer_callback_query(call.id, "⚡ Статистика сервера")
 
         elif action == 'userstats':
-            from handlers.user_handlers import user_stats
+            # Создаем fake message для вызова обработчика
             class FakeMessage:
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/userstats'
 
             fake_msg = FakeMessage()
-            user_stats(fake_msg)
+
+            # Вызываем обработчик user_stats из user_handlers
+            for handler in bot.message_handlers:
+                if hasattr(handler, '__name__') and handler.__name__ == 'user_stats':
+                    handler(fake_msg)
+                    break
+            else:
+                # Если не нашли, импортируем модуль и вызываем функцию
+                import handlers.user_handlers
+                handlers.user_handlers.user_stats(fake_msg)
+
             bot.answer_callback_query(call.id, "⚡ Статистика пользователей")
 
         elif action == 'activestats':
-            from handlers.user_handlers import show_active_stats
+            # Создаем fake message для вызова обработчика
             class FakeMessage:
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/activestats'
 
             fake_msg = FakeMessage()
-            show_active_stats(fake_msg)
+
+            # Вызываем обработчик show_active_stats из user_handlers
+            for handler in bot.message_handlers:
+                if hasattr(handler, '__name__') and handler.__name__ == 'show_active_stats':
+                    handler(fake_msg)
+                    break
+            else:
+                # Если не нашли, импортируем модуль и вызываем функцию
+                import handlers.user_handlers
+                handlers.user_handlers.show_active_stats(fake_msg)
+
             bot.answer_callback_query(call.id, "⚡ Активные подключения")
 
         elif action == 'admin':
@@ -88,6 +135,7 @@ def setup_callback_handlers(bot):
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/admin'
 
             fake_msg = FakeMessage()
             admin_panel(fake_msg)
@@ -99,6 +147,7 @@ def setup_callback_handlers(bot):
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/manage_admins'
 
             fake_msg = FakeMessage()
             manage_admins(fake_msg)
@@ -110,6 +159,7 @@ def setup_callback_handlers(bot):
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/deleteuser'
 
             fake_msg = FakeMessage()
             delete_user(fake_msg)
@@ -205,15 +255,18 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
             return
 
-        # Используем обертку для обновления списка
+        # Создаем fake message для вызова обработчика
         class FakeMessage:
             def __init__(self):
                 self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                 self.from_user = call.from_user
+                self.text = '/userstats'
 
         fake_msg = FakeMessage()
-        from handlers.user_handlers import user_stats
-        user_stats(fake_msg)
+
+        # Вызываем обработчик user_stats из user_handlers
+        import handlers.user_handlers
+        handlers.user_handlers.user_stats(fake_msg)
 
         bot.answer_callback_query(call.id, "🔄 Список обновлен")
 
@@ -394,6 +447,7 @@ def setup_callback_handlers(bot):
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                     self.from_user = call.from_user
+                    self.text = '/clear'
 
             fake_msg = FakeMessage()
             clear_database(fake_msg)
@@ -406,6 +460,7 @@ def setup_callback_handlers(bot):
                     def __init__(self):
                         self.chat = type('obj', (object,), {'id': call.message.chat.id})()
                         self.from_user = call.from_user
+                        self.text = '/manage_admins'
 
                 fake_msg = FakeMessage()
                 manage_admins(fake_msg)
