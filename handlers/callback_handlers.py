@@ -1,5 +1,3 @@
-[file name]: callback_handlers.py
-[file content begin]
 import os
 import telebot
 import logging

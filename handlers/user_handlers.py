@@ -1,5 +1,3 @@
-[file name]: user_handlers.py
-[file content begin]
 import telebot
 import logging
 from telebot import types
