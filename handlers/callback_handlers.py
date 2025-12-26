@@ -110,6 +110,108 @@ def setup_callback_handlers(bot):
 
         bot.answer_callback_query(call.id, "⚡ Выполняем...")
 
+    # ========== ОБРАБОТЧИКИ ПАГИНАЦИИ ДЛЯ USERSTATS ==========
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('userstats_page_'))
+    def handle_userstats_pagination(call):
+        user_id = call.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+            return
+
+        try:
+            page = int(call.data.replace('userstats_page_', ''))
+
+            # Получаем всех пользователей
+            users = db.get_all_users()
+            if not users:
+                bot.send_message(call.message.chat.id, "📭 В базе данных нет пользователей")
+                bot.answer_callback_query(call.id, "📭 Нет пользователей")
+                return
+
+            # Создаем пагинированный список кнопок
+            buttons_per_page = 10
+            total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
+
+            # Проверяем валидность страницы
+            page = max(0, min(page, total_pages - 1))
+
+            start_idx = page * buttons_per_page
+            end_idx = min(start_idx + buttons_per_page, len(users))
+
+            # Создаем кнопки пользователей
+            buttons = []
+            for i in range(start_idx, end_idx):
+                user = users[i]
+                if len(user) >= 2:
+                    username = user[1]
+                    is_active = user[9] if len(user) > 9 else 0
+                    status = "🟢" if is_active else "⚪"
+                    buttons.append([types.InlineKeyboardButton(
+                        f"{status} {username}",
+                        callback_data=f'userstats_{username}'
+                    )])
+
+            # Добавляем кнопки навигации если есть больше одной страницы
+            if total_pages > 1:
+                nav_buttons = []
+                if page > 0:
+                    nav_buttons.append(
+                        types.InlineKeyboardButton("⬅️ Назад", callback_data=f'userstats_page_{page - 1}'))
+                if page < total_pages - 1:
+                    nav_buttons.append(
+                        types.InlineKeyboardButton("Вперед ➡️", callback_data=f'userstats_page_{page + 1}'))
+
+                if nav_buttons:
+                    buttons.append(nav_buttons)
+
+            # Кнопка обновления списка
+            buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
+
+            markup = types.InlineKeyboardMarkup(buttons)
+
+            try:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+                    reply_markup=markup
+                )
+            except Exception as e:
+                # Если сообщение нельзя редактировать, отправляем новое
+                bot.send_message(
+                    call.message.chat.id,
+                    f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
+                    reply_markup=markup
+                )
+
+            bot.answer_callback_query(call.id, f"Страница {page + 1}")
+
+        except Exception as e:
+            logger.error(f"Ошибка пагинации userstats: {e}")
+            bot.answer_callback_query(call.id, "❌ Ошибка")
+
+    @bot.callback_query_handler(func=lambda call: call.data == 'userstats_refresh')
+    def handle_userstats_refresh(call):
+        user_id = call.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+            return
+
+        # Используем обертку для обновления списка
+        class FakeMessage:
+            def __init__(self):
+                self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                self.from_user = call.from_user
+
+        fake_msg = FakeMessage()
+        from handlers.user_handlers import user_stats_wrapper
+        user_stats_wrapper(fake_msg)
+
+        bot.answer_callback_query(call.id, "🔄 Список обновлен")
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith('platform_'))
     def handle_platform_selection(call):
         try:
@@ -154,6 +256,11 @@ def setup_callback_handlers(bot):
 
         if not db.is_admin(user_id):
             bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+            return
+
+        # Проверяем, не является ли это пагинацией
+        if call.data.startswith('userstats_page_'):
+            # Уже обработано в другом обработчике
             return
 
         username = call.data.replace('userstats_', '')

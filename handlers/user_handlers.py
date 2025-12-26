@@ -178,6 +178,7 @@ def user_stats_wrapper(message):
     start_idx = page * buttons_per_page
     end_idx = min(start_idx + buttons_per_page, len(users))
 
+    # Создаем кнопки пользователей
     buttons = []
     for i in range(start_idx, end_idx):
         user = users[i]
@@ -189,6 +190,20 @@ def user_stats_wrapper(message):
                 f"{status} {username}",
                 callback_data=f'userstats_{username}'
             )])
+
+    # Добавляем кнопки навигации если есть больше одной страницы
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'userstats_page_{page - 1}'))
+        if page < total_pages - 1:
+            nav_buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'userstats_page_{page + 1}'))
+
+        if nav_buttons:
+            buttons.append(nav_buttons)
+
+    # Кнопка обновления списка
+    buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
 
     markup = types.InlineKeyboardMarkup(buttons)
     bot_instance = telebot.TeleBot(Config.BOT_TOKEN)
