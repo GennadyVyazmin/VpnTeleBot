@@ -114,3 +114,32 @@ def setup_admin_handlers(bot):
         else:
             bot.send_message(message.chat.id, "Выберите пользователя для удаления (только ваши пользователи):",
                              reply_markup=markup)
+
+    @bot.message_handler(commands=['clear'])
+    def clear_database(message):
+        """Очистка всей базы данных"""
+        user_id = message.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+            return
+
+        logger.info(f"Команда /clear от администратора {user_id}")
+
+        buttons = [
+            [types.InlineKeyboardButton("✅ Создать бэкап и очистить", callback_data='confirm_clear_with_backup')],
+            [types.InlineKeyboardButton("⚠️ Очистить без бэкапа", callback_data='confirm_clear_no_backup')],
+            [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_clear')]
+        ]
+
+        markup = types.InlineKeyboardMarkup(buttons)
+        bot.send_message(
+            message.chat.id,
+            "⚠️ Вы собираетесь очистить всю базу данных!\n\n"
+            "Это действие удалит:\n"
+            "• Всех пользователей\n"
+            "• Всю статистику трафика\n"
+            "• Все сессии\n\n"
+            "Выберите действие:",
+            reply_markup=markup
+        )

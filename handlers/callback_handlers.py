@@ -14,6 +14,52 @@ logger = logging.getLogger(__name__)
 def setup_callback_handlers(bot):
     """Настройка обработчиков callback запросов"""
 
+    # ========== ОБРАБОТЧИКИ ДЛЯ START КНОПОК ==========
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('start_'))
+    def handle_start_buttons(call):
+        user_id = call.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+            return
+
+        action = call.data.replace('start_', '')
+
+        if action == 'adduser':
+            from handlers.user_handlers import add_user
+            add_user(call.message)
+
+        elif action == 'listusers':
+            from handlers.user_handlers import list_users
+            list_users(call.message)
+
+        elif action == 'stats':
+            from handlers.user_handlers import show_stats
+            show_stats(call.message)
+
+        elif action == 'userstats':
+            from handlers.user_handlers import user_stats
+            user_stats(call.message)
+
+        elif action == 'activestats':
+            from handlers.user_handlers import show_active_stats
+            show_active_stats(call.message)
+
+        elif action == 'admin':
+            from handlers.admin_handlers import admin_panel
+            admin_panel(call.message)
+
+        elif action == 'manage_admins':
+            from handlers.admin_handlers import manage_admins
+            manage_admins(call.message)
+
+        elif action == 'deleteuser':
+            from handlers.admin_handlers import delete_user
+            delete_user(call.message)
+
+        bot.answer_callback_query(call.id, "⚡ Выполняем...")
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith('platform_'))
     def handle_platform_selection(call):
         try:
@@ -191,6 +237,8 @@ def setup_callback_handlers(bot):
                 buttons = [
                     [types.InlineKeyboardButton("📝 Ввести ID вручную", callback_data='add_manual')],
                     [types.InlineKeyboardButton("🔗 Переслать сообщение", callback_data='add_forward')],
+                    [types.InlineKeyboardButton("📇 Из контактов Telegram", callback_data='add_contact')],
+                    [types.InlineKeyboardButton("👥 Из пользователей бота", callback_data='add_from_users')],
                     [types.InlineKeyboardButton("❌ Отмена", callback_data='add_cancel')]
                 ]
                 markup = types.InlineKeyboardMarkup(buttons)
@@ -310,9 +358,82 @@ def setup_callback_handlers(bot):
             bot.register_next_step_handler(msg, process_add_admin_forward, bot)
             bot.answer_callback_query(call.id, "🔗 Перешлите сообщение")
 
+        elif method == 'add_contact':
+            # Запрашиваем контакт через кнопку "Поделиться контактом"
+            keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            contact_button = types.KeyboardButton("📇 Поделиться контактом", request_contact=True)
+            cancel_button = types.KeyboardButton("❌ Отмена")
+            keyboard.add(contact_button, cancel_button)
+
+            msg = bot.send_message(
+                call.message.chat.id,
+                "Нажмите кнопку ниже, чтобы поделиться контактом из вашего списка контактов Telegram:",
+                reply_markup=keyboard
+            )
+            bot.register_next_step_handler(msg, process_add_admin_contact, bot)
+            bot.answer_callback_query(call.id, "📇 Запрос контакта")
+
+        elif method == 'add_from_users':
+            # Показываем список пользователей бота
+            show_users_list_for_admin(bot, call.message.chat.id, call.id)
+
         elif method == 'add_cancel':
             bot.send_message(call.message.chat.id, "❌ Добавление админа отменено")
             bot.answer_callback_query(call.id, "❌ Отменено")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('select_user_'))
+    def handle_select_user_for_admin(call):
+        user_id = call.from_user.id
+
+        if not db.is_super_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Только для супер-администратора")
+            return
+
+        try:
+            selected_user_id = int(call.data.replace('select_user_', ''))
+
+            # Получаем информацию о пользователе
+            try:
+                user_info = bot.get_chat(selected_user_id)
+                username = user_info.username
+                if username:
+                    display_name = f"@{username}"
+                else:
+                    display_name = user_info.first_name
+                    if user_info.last_name:
+                        display_name += f" {user_info.last_name}"
+            except Exception as e:
+                display_name = f"Пользователь {selected_user_id}"
+                logger.error(f"Ошибка получения информации о пользователе {selected_user_id}: {e}")
+
+            # Добавляем в администраторы
+            if db.add_admin(selected_user_id, display_name, user_id):
+                bot.send_message(call.message.chat.id,
+                                 f"✅ Пользователь {display_name} (ID: {selected_user_id}) добавлен в администраторы")
+            else:
+                bot.send_message(call.message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
+
+            bot.answer_callback_query(call.id, "✅ Готово")
+
+        except Exception as e:
+            logger.error(f"Ошибка выбора пользователя: {e}")
+            bot.send_message(call.message.chat.id, "❌ Ошибка при добавлении")
+            bot.answer_callback_query(call.id, "❌ Ошибка")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('users_page_'))
+    def handle_users_pagination(call):
+        user_id = call.from_user.id
+
+        if not db.is_super_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Только для супер-администратора")
+            return
+
+        try:
+            page = int(call.data.replace('users_page_', ''))
+            show_users_list_for_admin(bot, call.message.chat.id, call.id, page, call.message.message_id)
+        except Exception as e:
+            logger.error(f"Ошибка пагинации: {e}")
+            bot.answer_callback_query(call.id, "❌ Ошибка")
 
     @bot.callback_query_handler(func=lambda call: call.data in ['reset_all_counters', 'cancel_reset_counters'])
     def handle_reset_counters(call):
@@ -323,7 +444,8 @@ def setup_callback_handlers(bot):
             return
 
         if call.data == 'reset_all_counters':
-            if traffic_monitor.reset_traffic_counter():
+            # Используем функцию reset_all_traffic из database
+            if db.reset_all_traffic():
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
@@ -344,6 +466,125 @@ def setup_callback_handlers(bot):
             )
 
         bot.answer_callback_query(call.id)
+
+    @bot.callback_query_handler(func=lambda call: call.data == 'listusers_refresh')
+    def handle_listusers_refresh(call):
+        """Обработчик обновления списка пользователей"""
+        chat_id = call.message.chat.id
+        message_id = call.message.message_id
+
+        if chat_id not in list_users_pages:
+            bot.answer_callback_query(call.id, "Используйте /listusers снова")
+            return
+
+        # Обновляем данные
+        users = db.get_all_users()
+        if users:
+            current_page = list_users_pages[chat_id]['page']
+            list_users_pages[chat_id]['users'] = users
+            total_pages = (len(users) + list_users_pages[chat_id]['page_size'] - 1) // list_users_pages[chat_id][
+                'page_size']
+            if current_page >= total_pages:
+                list_users_pages[chat_id]['page'] = max(0, total_pages - 1)
+
+            # Показываем обновленную страницу
+            from handlers.user_handlers import show_list_users_page
+            show_list_users_page(bot, chat_id, message_id, call.id)
+        else:
+            bot.answer_callback_query(call.id, "📭 Нет пользователей")
+
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+def show_users_list_for_admin(bot, chat_id, callback_id=None, page=0, message_id=None):
+    """Показывает список пользователей бота для выбора администратора"""
+    try:
+        # Получаем всех пользователей из БД
+        users = db.get_all_users()
+        admins = db.get_all_admins()
+        admin_ids = [admin[0] for admin in admins]
+
+        # Фильтруем пользователей, которые еще не админы
+        available_users = []
+        for user in users:
+            if len(user) >= 2:
+                user_id_from_db = None
+                # Ищем ID пользователя в разных местах
+                if user[0] and isinstance(user[0], int):  # ID из БД
+                    user_id_from_db = user[0]
+                # Также можем проверить created_by
+                elif len(user) >= 3 and user[2] and isinstance(user[2], int):
+                    user_id_from_db = user[2]
+
+                if user_id_from_db and user_id_from_db not in admin_ids:
+                    available_users.append({
+                        'id': user_id_from_db,
+                        'username': user[1],
+                        'created_at': user[4] if len(user) > 4 else None
+                    })
+
+        if not available_users:
+            bot.send_message(chat_id, "❌ Нет доступных пользователей для добавления в администраторы")
+            if callback_id:
+                bot.answer_callback_query(callback_id, "❌ Нет пользователей")
+            return
+
+        # Пагинация
+        users_per_page = 10
+        total_pages = (len(available_users) + users_per_page - 1) // users_per_page
+        page = max(0, min(page, total_pages - 1))
+
+        start_idx = page * users_per_page
+        end_idx = min(start_idx + users_per_page, len(available_users))
+
+        message_text = f"👥 Выберите пользователя для добавления в администраторы (стр. {page + 1}/{total_pages}):\n\n"
+
+        buttons = []
+        for i in range(start_idx, end_idx):
+            user = available_users[i]
+            button_text = f"👤 {user['username']}"
+            if user['created_at']:
+                date_str = user['created_at'][:10] if len(user['created_at']) > 10 else user['created_at']
+                button_text += f" ({date_str})"
+
+            buttons.append([types.InlineKeyboardButton(
+                button_text,
+                callback_data=f'select_user_{user["id"]}'
+            )])
+
+        # Кнопки навигации
+        navigation_buttons = []
+        if page > 0:
+            navigation_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'users_page_{page - 1}'))
+        if page < total_pages - 1:
+            navigation_buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'users_page_{page + 1}'))
+
+        if navigation_buttons:
+            buttons.append(navigation_buttons)
+
+        markup = types.InlineKeyboardMarkup(buttons)
+
+        if message_id:
+            try:
+                bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=message_text,
+                    reply_markup=markup
+                )
+            except:
+                bot.send_message(chat_id, message_text, reply_markup=markup)
+        else:
+            bot.send_message(chat_id, message_text, reply_markup=markup)
+
+        if callback_id:
+            bot.answer_callback_query(callback_id, "👥 Выбор пользователя")
+
+    except Exception as e:
+        logger.error(f"Ошибка показа списка пользователей: {e}")
+        bot.send_message(chat_id, "❌ Ошибка при получении списка пользователей")
+        if callback_id:
+            bot.answer_callback_query(callback_id, "❌ Ошибка")
 
 
 def process_add_admin_manual(message, bot):
@@ -386,6 +627,42 @@ def process_add_admin_forward(message, bot):
         bot.send_message(message.chat.id, f"✅ Пользователь {username} (ID: {user_id}) добавлен в администраторы")
     else:
         bot.send_message(message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
+
+
+def process_add_admin_contact(message, bot):
+    """Обработчик добавления администратора через контакт"""
+    if message.content_type == 'contact':
+        contact = message.contact
+
+        # Скрываем клавиатуру
+        remove_markup = types.ReplyKeyboardRemove()
+        bot.send_message(message.chat.id, "✅ Контакт получен", reply_markup=remove_markup)
+
+        if contact.user_id:
+            user_id = contact.user_id
+            username = contact.first_name
+            if contact.last_name:
+                username += f" {contact.last_name}"
+
+            # Добавляем номер телефона если есть
+            if contact.phone_number:
+                username += f" ({contact.phone_number})"
+
+            if db.add_admin(user_id, username, Config.SUPER_ADMIN_ID):
+                bot.send_message(message.chat.id, f"✅ Пользователь {username} добавлен в администраторы")
+            else:
+                bot.send_message(message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
+        else:
+            bot.send_message(message.chat.id, "❌ Контакт не содержит информации о пользователе")
+
+    elif message.text and message.text == "❌ Отмена":
+        remove_markup = types.ReplyKeyboardRemove()
+        bot.send_message(message.chat.id, "❌ Добавление админа отменено", reply_markup=remove_markup)
+
+    else:
+        remove_markup = types.ReplyKeyboardRemove()
+        bot.send_message(message.chat.id, "❌ Не удалось получить контакт. Попробуйте еще раз.",
+                         reply_markup=remove_markup)
 
 
 def send_ios_profile(bot, call, username):
@@ -484,3 +761,7 @@ def send_windows_profile(bot, call, username):
     except Exception as e:
         logger.error(f"Ошибка при отправке дополнительных файлов Windows: {e}")
         bot.send_message(call.message.chat.id, "⚠️ Не удалось отправить дополнительные файлы конфигурации")
+
+
+# Импортируем глобальную переменную из user_handlers
+from handlers.user_handlers import list_users_pages

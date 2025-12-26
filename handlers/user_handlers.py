@@ -33,41 +33,43 @@ def setup_user_handlers(bot):
 
 👑 Вы - супер-администратор
 
-Доступные команды:
-/adduser - Добавить пользователя VPN
-/listusers - Список всех пользователей  
-/stats - Статистика сервера
-/userstats - Статистика по пользователям
-/traffic - Общая статистика трафика
-/activestats - Активные подключения
-/syncstats - Синхронизировать статистику
+Используйте кнопки ниже для управления:"""
 
-👨‍💻 Админ-команды:
-/admin - Панель администратора
-/manage_admins - Управление администраторами
-/deleteuser - Удалить пользователя"""
+                # Кнопки для супер-админа
+                buttons = [
+                    [types.InlineKeyboardButton("➕ Добавить пользователя", callback_data='start_adduser')],
+                    [types.InlineKeyboardButton("📋 Список пользователей", callback_data='start_listusers')],
+                    [types.InlineKeyboardButton("📊 Статистика сервера", callback_data='start_stats')],
+                    [types.InlineKeyboardButton("👤 Статистика по пользователям", callback_data='start_userstats')],
+                    [types.InlineKeyboardButton("🔌 Активные подключения", callback_data='start_activestats')],
+                    [types.InlineKeyboardButton("👨‍💻 Панель администратора", callback_data='start_admin')],
+                    [types.InlineKeyboardButton("👑 Управление админами", callback_data='start_manage_admins')],
+                    [types.InlineKeyboardButton("🗑️ Удалить пользователя", callback_data='start_deleteuser')]
+                ]
             else:
                 welcome_text = """🚀 VPN Manager Bot - Админ Панель
 
-Доступные команды:
-/adduser - Добавить пользователя VPN
-/listusers - Список всех пользователей
-/stats - Статистика сервера  
-/userstats - Статистика по пользователям
-/traffic - Общая статистика трафика
-/activestats - Активные подключения
-/syncstats - Синхронизировать статистику
+Используйте кнопки ниже для управления:"""
 
-👨‍💻 Админ-команды:
-/admin - Панель администратора
-/deleteuser - Удалить пользователя"""
+                # Кнопки для обычного админа
+                buttons = [
+                    [types.InlineKeyboardButton("➕ Добавить пользователя", callback_data='start_adduser')],
+                    [types.InlineKeyboardButton("📋 Список пользователей", callback_data='start_listusers')],
+                    [types.InlineKeyboardButton("📊 Статистика сервера", callback_data='start_stats')],
+                    [types.InlineKeyboardButton("👤 Статистика по пользователям", callback_data='start_userstats')],
+                    [types.InlineKeyboardButton("🔌 Активные подключения", callback_data='start_activestats')],
+                    [types.InlineKeyboardButton("👨‍💻 Панель администратора", callback_data='start_admin')],
+                    [types.InlineKeyboardButton("🗑️ Удалить пользователя", callback_data='start_deleteuser')]
+                ]
+
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
         else:
             welcome_text = """🚀 VPN Manager Bot
 
 У вас нет прав доступа к этому боту.
 Обратитесь к администратору."""
-
-        bot.send_message(message.chat.id, welcome_text)
+            bot.send_message(message.chat.id, welcome_text)
 
     @bot.message_handler(commands=['adduser'])
     def add_user(message):
@@ -583,8 +585,6 @@ def setup_user_handlers(bot):
                     bot.send_message(message.chat.id, f"```{part}```", parse_mode='Markdown')
         else:
             bot.send_message(message.chat.id, f"```{debug_text}```", parse_mode='Markdown')
-
-
 
 
 def show_platform_selector(bot, chat_id, username):
