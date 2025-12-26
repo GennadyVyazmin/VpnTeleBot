@@ -10,6 +10,14 @@ from traffic_monitor import traffic_monitor
 
 logger = logging.getLogger(__name__)
 
+# Глобальные переменные для хранения состояния пагинации
+list_users_pages = {}
+
+
+def split_message(text, max_length=4000):
+    """Разбивает текст на части не длиннее max_length символов"""
+    return [text[i:i + max_length] for i in range(0, len(text), max_length)]
+
 
 def setup_user_handlers(bot):
     """Настройка обработчиков команд пользователя"""
@@ -148,26 +156,45 @@ def setup_user_handlers(bot):
             bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
             return
 
-        user_list = "📋 Список пользователей:\n\n"
-        for user in users:
-            if len(user) >= 11:
-                username = user[1]
-                created_by_username = user[3]
-                created_at = user[4]
-                total_conn = user[5] or 0
-                last_conn = user[6]
-                sent = user[7] or 0
-                received = user[8] or 0
-                is_active = user[9]
-            else:
-                username = user[1]
-                created_by_username = user[3] if len(user) > 3 else "Неизвестно"
-                created_at = user[4] if len(user) > 4 else ""
-                total_conn = user[5] if len(user) > 5 else 0
-                last_conn = user[6] if len(user) > 6 else ""
-                sent = user[7] if len(user) > 7 else 0
-                received = user[8] if len(user) > 8 else 0
-                is_active = user[9] if len(user) > 9 else 0
+        # Сохраняем данные для пагинации
+        chat_id = message.chat.id
+        list_users_pages[chat_id] = {
+            'users': users,
+            'page': 0,
+            'page_size': 15  # Пользователей на страницу
+        }
+
+        # Показываем первую страницу
+        show_list_users_page(bot, chat_id)
+
+    def show_list_users_page(bot, chat_id, edit_message_id=None):
+        """Показывает страницу списка пользователей"""
+        if chat_id not in list_users_pages:
+            return
+
+        data = list_users_pages[chat_id]
+        users = data['users']
+        page = data['page']
+        page_size = data['page_size']
+
+        total_pages = (len(users) + page_size - 1) // page_size
+        start_idx = page * page_size
+        end_idx = min(start_idx + page_size, len(users))
+
+        user_list = f"📋 Список пользователей (стр. {page + 1}/{total_pages}):\n\n"
+
+        for i in range(start_idx, end_idx):
+            user = users[i]
+
+            # Безопасное извлечение данных
+            username = user[1] if len(user) > 1 else "Unknown"
+            created_by_username = user[3] if len(user) > 3 else "Неизвестно"
+            created_at = user[4] if len(user) > 4 else ""
+            total_conn = user[5] if len(user) > 5 else 0
+            last_conn = user[6] if len(user) > 6 else ""
+            sent = user[7] if len(user) > 7 else 0
+            received = user[8] if len(user) > 8 else 0
+            is_active = user[9] if len(user) > 9 else 0
 
             status = "🟢" if is_active else "⚪"
             user_list += f"{status} {username}\n"
@@ -177,7 +204,77 @@ def setup_user_handlers(bot):
                 user_list += f"   Подключений: {total_conn}, трафик: {format_bytes(total_traffic)}\n"
             user_list += "\n"
 
-        bot.send_message(message.chat.id, user_list)
+        user_list += f"Всего пользователей: {len(users)}"
+
+        # Создаем кнопки навигации
+        markup = types.InlineKeyboardMarkup()
+        buttons = []
+
+        if page > 0:
+            buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f'listusers_prev_{page - 1}'))
+
+        if page < total_pages - 1:
+            buttons.append(types.InlineKeyboardButton("Вперед ➡️", callback_data=f'listusers_next_{page + 1}'))
+
+        if buttons:
+            markup.row(*buttons)
+
+        # Кнопка обновления
+        markup.row(types.InlineKeyboardButton("🔄 Обновить", callback_data='listusers_refresh'))
+
+        if edit_message_id:
+            try:
+                bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=edit_message_id,
+                    text=user_list,
+                    reply_markup=markup
+                )
+            except Exception as e:
+                logger.error(f"Ошибка редактирования сообщения: {e}")
+                bot.send_message(chat_id, user_list, reply_markup=markup)
+        else:
+            bot.send_message(chat_id, user_list, reply_markup=markup)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('listusers_'))
+    def handle_listusers_callback(call):
+        """Обработчик навигации по списку пользователей"""
+        chat_id = call.message.chat.id
+        message_id = call.message.message_id
+
+        if chat_id not in list_users_pages:
+            bot.answer_callback_query(call.id, "Данные устарели. Используйте /listusers снова")
+            return
+
+        if call.data.startswith('listusers_prev_'):
+            try:
+                page = int(call.data.split('_')[2])
+                list_users_pages[chat_id]['page'] = page
+                show_list_users_page(bot, chat_id, message_id)
+            except:
+                list_users_pages[chat_id]['page'] -= 1
+                show_list_users_page(bot, chat_id, message_id)
+            bot.answer_callback_query(call.id)
+
+        elif call.data.startswith('listusers_next_'):
+            try:
+                page = int(call.data.split('_')[2])
+                list_users_pages[chat_id]['page'] = page
+                show_list_users_page(bot, chat_id, message_id)
+            except:
+                list_users_pages[chat_id]['page'] += 1
+                show_list_users_page(bot, chat_id, message_id)
+            bot.answer_callback_query(call.id)
+
+        elif call.data == 'listusers_refresh':
+            # Обновляем данные
+            users = db.get_all_users()
+            if users:
+                list_users_pages[chat_id]['users'] = users
+                show_list_users_page(bot, chat_id, message_id)
+                bot.answer_callback_query(call.id, "Список обновлен")
+            else:
+                bot.answer_callback_query(call.id, "Нет пользователей")
 
     @bot.message_handler(commands=['stats'])
     def show_stats(message):
@@ -266,7 +363,16 @@ def setup_user_handlers(bot):
 
         stats_text += f"Всего активных: {len(traffic_data)}"
 
-        bot.send_message(message.chat.id, stats_text)
+        # Защита от слишком длинных сообщений
+        if len(stats_text) > 4000:
+            parts = split_message(stats_text)
+            for i, part in enumerate(parts):
+                if i == 0:
+                    bot.send_message(message.chat.id, part)
+                else:
+                    bot.send_message(message.chat.id, f"`{part}`", parse_mode='Markdown')
+        else:
+            bot.send_message(message.chat.id, stats_text)
 
     @bot.message_handler(commands=['userstats'])
     def user_stats(message):
