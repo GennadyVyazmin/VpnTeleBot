@@ -27,87 +27,88 @@ def setup_callback_handlers(bot):
         action = call.data.replace('start_', '')
 
         if action == 'adduser':
-            # Создаем временное сообщение для вызова add_user
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
-            from handlers.user_handlers import add_user
-            add_user(fake_message)
+            # Используем глобальную функцию
+            from handlers.user_handlers import add_user_wrapper
+            # Создаем fake message
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            add_user_wrapper(fake_msg)
 
         elif action == 'listusers':
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
-            from handlers.user_handlers import list_users
-            list_users(fake_message)
+            from handlers.user_handlers import list_users_wrapper
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            list_users_wrapper(fake_msg)
 
         elif action == 'stats':
-            # Вместо импорта функции, выполняем код напрямую
-            show_stats_directly(bot, call)
+            from handlers.user_handlers import show_stats_wrapper
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            show_stats_wrapper(fake_msg)
 
         elif action == 'userstats':
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
-            from handlers.user_handlers import user_stats
-            user_stats(fake_message)
+            from handlers.user_handlers import user_stats_wrapper
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            user_stats_wrapper(fake_msg)
 
         elif action == 'activestats':
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
-            from handlers.user_handlers import show_active_stats
-            show_active_stats(fake_message)
+            from handlers.user_handlers import show_active_stats_wrapper
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            show_active_stats_wrapper(fake_msg)
 
         elif action == 'admin':
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
             from handlers.admin_handlers import admin_panel
-            admin_panel(fake_message)
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            admin_panel(fake_msg)
 
         elif action == 'manage_admins':
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
             from handlers.admin_handlers import manage_admins
-            manage_admins(fake_message)
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            manage_admins(fake_msg)
 
         elif action == 'deleteuser':
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
             from handlers.admin_handlers import delete_user
-            delete_user(fake_message)
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            delete_user(fake_msg)
 
         bot.answer_callback_query(call.id, "⚡ Выполняем...")
-
-    def show_stats_directly(bot, call):
-        """Прямой показ статистики без импорта"""
-        user_id = call.from_user.id
-
-        if not db.is_admin(user_id):
-            return
-
-        from traffic_monitor import traffic_monitor
-        from datetime import datetime
-
-        total_users = db.get_user_count()
-        active_users = db.get_active_users_count()
-
-        # Получаем свежие данные
-        traffic_data = traffic_monitor.parse_ipsec_status()
-
-        stats_text = f"""📊 Статистика VPN сервера
-
-👥 Всего пользователей: {total_users}
-🟢 Активных в БД: {active_users}
-🔌 Активных в ipsec: {len(traffic_data)}
-
-⏱️  Мониторинг: каждые {Config.STATS_UPDATE_INTERVAL} сек
-📁 Директория конфигов: {Config.VPN_PROFILES_PATH}
-🕒 Время сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
-
-        if traffic_data:
-            stats_text += "\n\n🔍 Активные подключения:"
-            for username, info in list(traffic_data.items())[:5]:
-                traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
-                stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
-
-        bot.send_message(call.message.chat.id, stats_text)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('platform_'))
     def handle_platform_selection(call):
@@ -214,8 +215,33 @@ def setup_callback_handlers(bot):
         action = call.data
 
         if action == 'admin_stats':
-            # Используем нашу прямую функцию
-            show_stats_directly(bot, call)
+            # Прямой показ статистики
+            from traffic_monitor import traffic_monitor
+            from datetime import datetime
+
+            total_users = db.get_user_count()
+            active_users = db.get_active_users_count()
+
+            # Получаем свежие данные
+            traffic_data = traffic_monitor.parse_ipsec_status()
+
+            stats_text = f"""📊 Статистика VPN сервера
+
+👥 Всего пользователей: {total_users}
+🟢 Активных в БД: {active_users}
+🔌 Активных в ipsec: {len(traffic_data)}
+
+⏱️  Мониторинг: каждые {Config.STATS_UPDATE_INTERVAL} сек
+📁 Директория конфигов: {Config.VPN_PROFILES_PATH}
+🕒 Время сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+            if traffic_data:
+                stats_text += "\n\n🔍 Активные подключения:"
+                for username, info in list(traffic_data.items())[:5]:
+                    traffic_mb = (info['absolute_sent'] + info['absolute_received']) / (1024 * 1024)
+                    stats_text += f"\n• {username}: {traffic_mb:.1f} MB (абсолютные значения)"
+
+            bot.send_message(call.message.chat.id, stats_text)
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
@@ -251,19 +277,26 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📋 Список бэкапов")
 
         elif action == 'admin_clear_db':
-            # Создаем временное сообщение
-            fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                   'from_user': call.from_user})
             from handlers.admin_handlers import clear_database
-            clear_database(fake_message)
+            class FakeMessage:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                    self.from_user = call.from_user
+
+            fake_msg = FakeMessage()
+            clear_database(fake_msg)
             bot.answer_callback_query(call.id, "🧹 Подтвердите очистку")
 
         elif action == 'admin_manage':
             if db.is_super_admin(user_id):
-                fake_message = type('obj', (object,), {'chat': type('obj', (object,), {'id': call.message.chat.id})(),
-                                                       'from_user': call.from_user})
                 from handlers.admin_handlers import manage_admins
-                manage_admins(fake_message)
+                class FakeMessage:
+                    def __init__(self):
+                        self.chat = type('obj', (object,), {'id': call.message.chat.id})()
+                        self.from_user = call.from_user
+
+                fake_msg = FakeMessage()
+                manage_admins(fake_msg)
                 bot.answer_callback_query(call.id, "👑 Управление админами")
             else:
                 bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
