@@ -70,6 +70,87 @@ def _get_server_ip():
 def setup_callback_handlers(bot):
     """Настройка обработчиков callback запросов"""
 
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('start_'))
+    def handle_start_buttons(call):
+        user_id = call.from_user.id
+
+        if not db.is_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+            return
+
+        action = call.data.replace('start_', '')
+
+        if action == 'adduser':
+            from handlers.user_handlers import user_states
+            user_states[user_id] = {'waiting_for_username': True}
+            bot.send_message(
+                call.message.chat.id,
+                'Введите имя пользователя (только латиница, цифры, _ и -):'
+            )
+            bot.answer_callback_query(call.id, "⚡ Введите имя пользователя")
+
+        elif action == 'listusers':
+            from handlers.user_handlers import list_users
+            list_users(call.message)
+            bot.answer_callback_query(call.id, "⚡ Список пользователей")
+
+        elif action == 'stats':
+            from handlers.user_handlers import show_stats
+            show_stats(call.message)
+            bot.answer_callback_query(call.id, "⚡ Статистика сервера")
+
+        elif action == 'userstats':
+            from handlers.user_handlers import user_stats
+            user_stats(call.message)
+            bot.answer_callback_query(call.id, "⚡ Статистика пользователей")
+
+        elif action == 'activestats':
+            from handlers.user_handlers import show_active_stats
+            show_active_stats(call.message)
+            bot.answer_callback_query(call.id, "⚡ Активные подключения")
+
+        elif action == 'admin':
+            if db.is_super_admin(user_id):
+                buttons = [
+                    [types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
+                    [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
+                    [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
+                    [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')],
+                    [types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
+                    [types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
+                ]
+            else:
+                buttons = [
+                    [types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
+                    [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
+                    [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
+                    [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')]
+                ]
+
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(call.message.chat.id, "👨‍💻 Панель администратора", reply_markup=markup)
+            bot.answer_callback_query(call.id, "⚡ Панель администратора")
+
+        elif action == 'manage_admins':
+            if db.is_super_admin(user_id):
+                buttons = [
+                    [types.InlineKeyboardButton("👥 Список админов", callback_data='admin_list')],
+                    [types.InlineKeyboardButton("➕ Добавить админа", callback_data='admin_add')],
+                    [types.InlineKeyboardButton("➖ Удалить админа", callback_data='admin_remove')]
+                ]
+                markup = types.InlineKeyboardMarkup(buttons)
+                bot.send_message(call.message.chat.id, "👑 Управление администраторами", reply_markup=markup)
+                bot.answer_callback_query(call.id, "⚡ Управление админами")
+            else:
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+
+        elif action == 'deleteuser':
+            bot.send_message(call.message.chat.id, "Используйте /deleteuser для удаления пользователя.")
+            bot.answer_callback_query(call.id, "⚡ Команда /deleteuser")
+
+        else:
+            bot.answer_callback_query(call.id, "❌ Неизвестная кнопка")
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith('platform_'))
     def handle_platform_selection(call):
         try:
