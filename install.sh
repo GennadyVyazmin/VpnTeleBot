@@ -41,6 +41,19 @@ ask_with_default() {
   printf "%s" "${value:-$default}"
 }
 
+validate_install_dir() {
+  local dir="$1"
+  if [[ "$dir" != /* ]]; then
+    echo "Install directory must be an absolute path: $dir"
+    return 1
+  fi
+  if [[ "$dir" =~ [[:space:]] ]]; then
+    echo "Install directory must not contain spaces: $dir"
+    return 1
+  fi
+  return 0
+}
+
 ask_non_empty() {
   local prompt="$1"
   local value=""
@@ -97,6 +110,7 @@ if [[ -f "$SCRIPT_DIR/main.py" && -f "$SCRIPT_DIR/requirements.txt" ]]; then
   echo "Detected project files next to install.sh, using: $PROJECT_DIR"
 else
   TARGET_DIR="$(ask_with_default "Enter install directory" "$DEFAULT_INSTALL_DIR")"
+  validate_install_dir "$TARGET_DIR"
   PROJECT_DIR="$TARGET_DIR"
 
   echo "Downloading project from:"
@@ -155,12 +169,13 @@ if command -v systemctl >/dev/null 2>&1; then
   cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=VPN TeleBot
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=$PROJECT_DIR
-EnvironmentFile=$ENV_FILE
+EnvironmentFile=-$ENV_FILE
 ExecStart=$VENV_DIR/bin/python $PROJECT_DIR/main.py
 Restart=always
 RestartSec=3
@@ -169,6 +184,14 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    if ! systemd-analyze verify "$UNIT_FILE"; then
+      echo "Generated systemd unit is invalid: $UNIT_FILE"
+      echo "Review the file and rerun install."
+      exit 1
+    fi
+  fi
 
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME"
