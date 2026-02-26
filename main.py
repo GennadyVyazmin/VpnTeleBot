@@ -163,7 +163,7 @@ def main():
     # Запуск бота
     try:
         logger.info("Запуск polling бота...")
-        bot.polling(none_stop=True, interval=1, timeout=30)
+        bot.polling(none_stop=True, interval=1, timeout=30, skip_pending=True)
     except Exception as e:
         logger.critical(f"Критическая ошибка бота: {str(e)}")
         print(f"❌ Критическая ошибка: {str(e)}")

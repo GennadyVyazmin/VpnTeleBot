@@ -2,6 +2,7 @@ import os
 import telebot
 import logging
 import subprocess
+import threading
 from telebot import types
 from database import db
 from vpn_manager import vpn_manager
@@ -561,15 +562,18 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
-            bot.send_message(call.message.chat.id, "🔄 Выполняем перезагрузку сервера...")
-            try:
-                subprocess.run(['reboot'], check=True)
-                bot.send_message(call.message.chat.id, "✅ Команда reboot отправлена")
-            except subprocess.CalledProcessError as e:
-                bot.send_message(call.message.chat.id, f"❌ Ошибка выполнения reboot: {e}")
-            except Exception as e:
-                bot.send_message(call.message.chat.id, f"❌ Неожиданная ошибка: {str(e)}")
+            # Сначала подтверждаем callback, чтобы Telegram не прислал его повторно после перезапуска.
             bot.answer_callback_query(call.id, "🔄 Reboot")
+            bot.send_message(call.message.chat.id, "🔄 Выполняем перезагрузку сервера...")
+
+            def do_reboot():
+                try:
+                    subprocess.run(['reboot'], check=True)
+                except Exception as e:
+                    logger.error(f"Ошибка выполнения reboot: {e}")
+
+            # Небольшая задержка дает боту отправить ответы в Telegram до остановки системы.
+            threading.Timer(2.0, do_reboot).start()
 
         elif action == 'admin_backup':
             bot.send_message(call.message.chat.id, "💾 Создание резервной копии...")
