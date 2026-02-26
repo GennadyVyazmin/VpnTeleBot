@@ -1,6 +1,7 @@
 import telebot
 import logging
 import subprocess
+import socket
 from telebot import types
 from database import db
 from vpn_manager import vpn_manager
@@ -42,6 +43,28 @@ def _extract_forwarded_user(message):
         "❌ Не удалось получить отправителя из пересланного сообщения.\n\n"
         "Проверьте, что это именно пересылка, а не скопированный текст."
     )
+
+
+def _get_server_ip():
+    """Пытается определить внешний IP сервера для инструкций."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+
+    try:
+        host_ip = socket.gethostbyname(socket.gethostname())
+        if host_ip and not host_ip.startswith("127."):
+            return host_ip
+    except Exception:
+        pass
+
+    return "YOUR_SERVER_IP"
 
 
 def setup_callback_handlers(bot):
@@ -445,10 +468,16 @@ def process_add_admin_contact(message, bot):
 
 
 def send_ios_profile(bot, call, username):
+    server_ip = _get_server_ip()
     bot.send_message(call.message.chat.id, f"📱 Отправка профиля для iOS ({username})...")
-    bot.send_message(call.message.chat.id,
-                     "<a href='https://telegra.ph/Testovaya-instrukciya-dlya-IOS-01-17'>Инструкция iOS</a>",
-                     parse_mode='HTML')
+    bot.send_message(
+        call.message.chat.id,
+        f"📘 Инструкция iOS:\n"
+        f"1. Скачайте и откройте файл профиля из сообщения ниже.\n"
+        f"2. Разрешите установку профиля в настройках iPhone.\n"
+        f"3. Зайдите: Настройки -> VPN и включите профиль.\n"
+        f"4. Сервер: {server_ip}"
+    )
 
     file_path = vpn_manager.get_profile_path(username, 'ios')
     if file_path:
@@ -459,10 +488,16 @@ def send_ios_profile(bot, call, username):
 
 
 def send_android_profile(bot, call, username):
+    server_ip = _get_server_ip()
     bot.send_message(call.message.chat.id, f"🤖 Отправка профиля для Android v11+ ({username})...")
-    bot.send_message(call.message.chat.id,
-                     "<a href='https://telegra.ph/Instrukciya-Android-v11-01-17'>Инструкция Android</a>",
-                     parse_mode='HTML')
+    bot.send_message(
+        call.message.chat.id,
+        f"📘 Инструкция Android v11+:\n"
+        f"1. Установите приложение StrongSwan из Google Play.\n"
+        f"2. Импортируйте профиль из файла ниже.\n"
+        f"3. Подключитесь к созданному профилю VPN.\n"
+        f"4. Сервер: {server_ip}"
+    )
 
     file_path = vpn_manager.get_profile_path(username, 'android')
     if file_path:
@@ -473,10 +508,16 @@ def send_android_profile(bot, call, username):
 
 
 def send_sswan_profile(bot, call, username):
+    server_ip = _get_server_ip()
     bot.send_message(call.message.chat.id, f"🤖 Отправка профиля для StrongSwan ({username})...")
-    bot.send_message(call.message.chat.id,
-                     "<a href='https://telegra.ph/Instrukciya-Android-do-11v-01-17'>Инструкция StrongSwan</a>",
-                     parse_mode='HTML')
+    bot.send_message(
+        call.message.chat.id,
+        f"📘 Инструкция StrongSwan (Android до v11):\n"
+        f"1. Установите StrongSwan VPN Client.\n"
+        f"2. Импортируйте профиль из файла ниже.\n"
+        f"3. Запустите подключение из приложения.\n"
+        f"4. Сервер: {server_ip}"
+    )
 
     file_path = vpn_manager.get_profile_path(username, 'sswan')
     if file_path:
@@ -487,9 +528,16 @@ def send_sswan_profile(bot, call, username):
 
 
 def send_macos_profile(bot, call, username):
+    server_ip = _get_server_ip()
     bot.send_message(call.message.chat.id, f"💻 Отправка профиля для MacOS ({username})...")
-    bot.send_message(call.message.chat.id, "<a href='https://telegra.ph/Instrukciya-macOS-01-17'>Инструкция MacOS</a>",
-                     parse_mode='HTML')
+    bot.send_message(
+        call.message.chat.id,
+        f"📘 Инструкция macOS:\n"
+        f"1. Откройте профиль из файла ниже.\n"
+        f"2. Подтвердите установку VPN-конфигурации в системных настройках.\n"
+        f"3. Включите VPN-подключение.\n"
+        f"4. Сервер: {server_ip}"
+    )
 
     file_path = vpn_manager.get_profile_path(username, 'macos')
     if file_path:
@@ -500,10 +548,16 @@ def send_macos_profile(bot, call, username):
 
 
 def send_windows_profile(bot, call, username):
+    server_ip = _get_server_ip()
     bot.send_message(call.message.chat.id, f"🪟 Отправка профиля для Windows ({username})...")
-    bot.send_message(call.message.chat.id,
-                     "<a href='https://telegra.ph/Instrukciya-dlya-Windows-01-17'>Инструкция Windows</a>",
-                     parse_mode='HTML')
+    bot.send_message(
+        call.message.chat.id,
+        f"📘 Инструкция Windows:\n"
+        f"1. Импортируйте сертификат из файла ниже.\n"
+        f"2. Создайте IKEv2 VPN-подключение в параметрах сети Windows.\n"
+        f"3. Укажите данные пользователя и подключитесь.\n"
+        f"4. Сервер: {server_ip}"
+    )
 
     # Основной файл P12
     file_path = vpn_manager.get_profile_path(username, 'win')
