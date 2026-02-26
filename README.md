@@ -17,7 +17,7 @@ wget https://get.vpnsetup.net -O vpn.sh && sudo sh vpn.sh
 ### В одну строку
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/GennadyVyazmin/VpnTeleBot/main/install.sh && chmod +x install.sh && sudo ./install.sh
+wget -O install.sh https://raw.githubusercontent.com/GennadyVyazmin/VpnTeleBot/master/install.sh && chmod +x install.sh && sudo ./install.sh
 ```
 
 Скрипт `install.sh`:
