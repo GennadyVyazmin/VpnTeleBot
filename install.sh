@@ -112,33 +112,56 @@ fi
 
 PROJECT_DIR=""
 if [[ -f "$SCRIPT_DIR/main.py" && -f "$SCRIPT_DIR/requirements.txt" ]]; then
-  PROJECT_DIR="$SCRIPT_DIR"
-  echo "Detected project files next to install.sh, using: $PROJECT_DIR"
+  TARGET_DIR="$(ask_with_default "Enter install directory" "$SCRIPT_DIR")"
 else
   TARGET_DIR="$(ask_with_default "Enter install directory" "$DEFAULT_INSTALL_DIR")"
-  validate_install_dir "$TARGET_DIR"
-  PROJECT_DIR="$TARGET_DIR"
-
-  echo "Downloading project from:"
-  echo "  $REPO_TARBALL_URL"
-
-  TMP_DIR="$(mktemp -d)"
-  ARCHIVE_PATH="$TMP_DIR/${REPO_NAME}.tar.gz"
-
-  fetch_file "$REPO_TARBALL_URL" "$ARCHIVE_PATH"
-  tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
-
-  EXTRACTED_DIR="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ -z "$EXTRACTED_DIR" ]]; then
-    echo "Failed to extract project archive."
-    exit 1
-  fi
-
-  mkdir -p "$PROJECT_DIR"
-  cp -a "$EXTRACTED_DIR"/. "$PROJECT_DIR"/
-  rm -rf "$TMP_DIR"
-  echo "Project downloaded to: $PROJECT_DIR"
 fi
+
+validate_install_dir "$TARGET_DIR"
+PROJECT_DIR="$TARGET_DIR"
+
+echo "Downloading project from:"
+echo "  $REPO_TARBALL_URL"
+
+TMP_DIR="$(mktemp -d)"
+ARCHIVE_PATH="$TMP_DIR/${REPO_NAME}.tar.gz"
+EXTRACTED_DIR=""
+
+fetch_file "$REPO_TARBALL_URL" "$ARCHIVE_PATH"
+tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
+EXTRACTED_DIR="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+if [[ -z "$EXTRACTED_DIR" ]]; then
+  echo "Failed to extract project archive."
+  rm -rf "$TMP_DIR"
+  exit 1
+fi
+
+# Сохраняем локальные runtime-файлы, если это переустановка в существующую папку.
+PRESERVE_DIR="$TMP_DIR/preserve"
+mkdir -p "$PRESERVE_DIR"
+if [[ -d "$PROJECT_DIR" ]]; then
+  cp -a "$PROJECT_DIR/.env" "$PRESERVE_DIR/" 2>/dev/null || true
+  cp -a "$PROJECT_DIR/users.db" "$PRESERVE_DIR/" 2>/dev/null || true
+  cp -a "$PROJECT_DIR/users.db-shm" "$PRESERVE_DIR/" 2>/dev/null || true
+  cp -a "$PROJECT_DIR/users.db-wal" "$PRESERVE_DIR/" 2>/dev/null || true
+  cp -a "$PROJECT_DIR/bacup_database" "$PRESERVE_DIR/" 2>/dev/null || true
+fi
+
+mkdir -p "$PROJECT_DIR"
+cp -a "$EXTRACTED_DIR"/. "$PROJECT_DIR"/
+
+# Возвращаем сохраненные runtime-файлы.
+cp -a "$PRESERVE_DIR/.env" "$PROJECT_DIR/" 2>/dev/null || true
+cp -a "$PRESERVE_DIR/users.db" "$PROJECT_DIR/" 2>/dev/null || true
+cp -a "$PRESERVE_DIR/users.db-shm" "$PROJECT_DIR/" 2>/dev/null || true
+cp -a "$PRESERVE_DIR/users.db-wal" "$PROJECT_DIR/" 2>/dev/null || true
+if [[ -d "$PRESERVE_DIR/bacup_database" ]]; then
+  rm -rf "$PROJECT_DIR/bacup_database"
+  cp -a "$PRESERVE_DIR/bacup_database" "$PROJECT_DIR/"
+fi
+
+rm -rf "$TMP_DIR"
+echo "Project prepared in: $PROJECT_DIR"
 
 VENV_DIR="$PROJECT_DIR/.venv"
 ENV_FILE="$PROJECT_DIR/.env"
