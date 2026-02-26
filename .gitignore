@@ -1,5 +1,6 @@
 .env
 vpn_bot.log
+*.log
 __pycache__/
 *.pyc
 var/backups/
