@@ -120,9 +120,10 @@ class Database:
                               added_by INTEGER NOT NULL,
                               added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                            )''')
-                # Добавляем супер-админа
-                self.execute("INSERT OR IGNORE INTO admins (user_id, username, added_by) VALUES (?, ?, ?)",
-                             (Config.SUPER_ADMIN_ID, "Супер-админ", Config.SUPER_ADMIN_ID))
+
+            # Гарантированно добавляем супер-админа при каждом старте
+            self.execute("INSERT OR IGNORE INTO admins (user_id, username, added_by) VALUES (?, ?, ?)",
+                         (Config.SUPER_ADMIN_ID, "Супер-админ", Config.SUPER_ADMIN_ID))
 
             # Таблица статистики
             if 'user_stats' not in existing_tables:

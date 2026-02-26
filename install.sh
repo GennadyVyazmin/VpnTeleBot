@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="vpn-telebot"
 REPO_OWNER="${REPO_OWNER:-GennadyVyazmin}"
 REPO_NAME="${REPO_NAME:-VpnTeleBot}"
-REPO_BRANCH="${REPO_BRANCH:-main}"
+REPO_BRANCH="${REPO_BRANCH:-master}"
 REPO_TARBALL_URL="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_BRANCH}"
 DEFAULT_INSTALL_DIR="/opt/VpnTeleBot"
 
@@ -74,6 +74,12 @@ ask_numeric() {
     fi
     echo "Value must be numeric."
   done
+}
+
+read_env_value() {
+  local key="$1"
+  local file="$2"
+  grep -E "^${key}=" "$file" 2>/dev/null | tail -n 1 | cut -d'=' -f2-
 }
 
 fetch_file() {
@@ -157,11 +163,44 @@ EOF
   echo ".env saved: $ENV_FILE"
 fi
 
+SUPER_ADMIN_ID_VALUE="$(read_env_value "SUPER_ADMIN_ID" "$ENV_FILE")"
+if [[ -z "${SUPER_ADMIN_ID_VALUE:-}" || ! "$SUPER_ADMIN_ID_VALUE" =~ ^[0-9]+$ ]]; then
+  SUPER_ADMIN_ID_VALUE="149999149"
+fi
+
 mkdir -p "$PROJECT_DIR/bacup_database"
 
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip
 "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt"
+
+# Первичная инициализация БД и супер-админа на этапе установки.
+python3 - <<EOF
+import sqlite3
+from pathlib import Path
+
+project_dir = Path(r"$PROJECT_DIR")
+db_path = project_dir / "users.db"
+super_admin_id = int("$SUPER_ADMIN_ID_VALUE")
+
+conn = sqlite3.connect(str(db_path))
+cur = conn.cursor()
+cur.execute('''CREATE TABLE IF NOT EXISTS admins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    added_by INTEGER NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)''')
+cur.execute(
+    "INSERT OR IGNORE INTO admins (user_id, username, added_by) VALUES (?, ?, ?)",
+    (super_admin_id, "Супер-админ", super_admin_id),
+)
+conn.commit()
+conn.close()
+print(f"DB initialized: {db_path}")
+print(f"Super admin ensured: {super_admin_id}")
+EOF
 
 echo
 if command -v systemctl >/dev/null 2>&1; then
