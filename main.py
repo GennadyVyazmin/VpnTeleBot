@@ -74,6 +74,9 @@ def check_single_instance():
 def main():
     """Основная функция запуска бота"""
 
+    # Создаем рабочие директории (в т.ч. директорию бэкапов)
+    Config.ensure_directories()
+
     # Проверка единственного экземпляра
     cleanup = check_single_instance()
 

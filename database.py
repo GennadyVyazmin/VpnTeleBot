@@ -611,6 +611,7 @@ class Database:
     def create_full_backup(self, reason="manual"):
         """Создает полную резервную копию базы данных"""
         try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_file = self.backup_dir / f"full_backup_{timestamp}.db"
 

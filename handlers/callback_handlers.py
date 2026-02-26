@@ -561,15 +561,15 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
-            bot.send_message(call.message.chat.id, "🔄 Перезапуск VPN службы...")
+            bot.send_message(call.message.chat.id, "🔄 Выполняем перезагрузку сервера...")
             try:
-                subprocess.run(['systemctl', 'restart', 'strongswan'], check=True)
-                bot.send_message(call.message.chat.id, "✅ StrongSwan перезапущен")
+                subprocess.run(['reboot'], check=True)
+                bot.send_message(call.message.chat.id, "✅ Команда reboot отправлена")
             except subprocess.CalledProcessError as e:
-                bot.send_message(call.message.chat.id, f"❌ Ошибка перезапуска StrongSwan: {e}")
+                bot.send_message(call.message.chat.id, f"❌ Ошибка выполнения reboot: {e}")
             except Exception as e:
                 bot.send_message(call.message.chat.id, f"❌ Неожиданная ошибка: {str(e)}")
-            bot.answer_callback_query(call.id, "🔄 Перезапуск")
+            bot.answer_callback_query(call.id, "🔄 Reboot")
 
         elif action == 'admin_backup':
             bot.send_message(call.message.chat.id, "💾 Создание резервной копии...")

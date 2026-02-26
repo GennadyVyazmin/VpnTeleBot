@@ -15,7 +15,7 @@ class Config:
     # Пути
     BASE_DIR = Path(__file__).parent
     DB_PATH = BASE_DIR / 'users.db'
-    BACKUP_DIR = BASE_DIR / 'backups'
+    BACKUP_DIR = BASE_DIR / 'var' / 'backups'
     IKEV2_SCRIPT_PATH = '/usr/bin/ikev2.sh'
     VPN_PROFILES_PATH = '/root/'
 
@@ -36,4 +36,4 @@ class Config:
     @classmethod
     def ensure_directories(cls):
         """Создает необходимые директории"""
-        cls.BACKUP_DIR.mkdir(exist_ok=True)
+        cls.BACKUP_DIR.mkdir(parents=True, exist_ok=True)

@@ -2,3 +2,7 @@
 vpn_bot.log
 __pycache__/
 *.pyc
+var/backups/
+users.db
+users.db-shm
+users.db-wal
