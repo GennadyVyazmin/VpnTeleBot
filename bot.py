@@ -171,6 +171,33 @@ class UserDB:
                 else:
                     logger.error(f"Ошибка коммита: {str(e)}")
                     return False
+
+    def restore_from_backup_file(self, backup_file_path):
+        """Восстанавливает users.db из файла бэкапа."""
+        try:
+            backup_path = Path(backup_file_path)
+            if not backup_path.exists():
+                return False, f"Файл бэкапа не найден: {backup_path}"
+
+            # Закрываем текущее соединение перед заменой файла БД
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+
+            shutil.copy2(backup_path, Config.DB_PATH)
+
+            # Удаляем WAL/SHM, чтобы не подхватить старое состояние
+            for suffix in ('.db-wal', '.db-shm'):
+                aux_file = f"{Config.DB_PATH}{suffix.replace('.db', '')}" if str(Config.DB_PATH).endswith('.db') else None
+                # Для DB_PATH='users.db' получаем users.db-wal/users.db-shm
+                if aux_file and os.path.exists(aux_file):
+                    os.remove(aux_file)
+
+            self.conn = self._create_connection()
+            return True, "База данных восстановлена из бэкапа"
+        except Exception as e:
+            return False, f"Ошибка восстановления БД: {str(e)}"
     
     def create_tables(self):
         """Создание таблиц с проверкой существования и миграцией данных"""
@@ -1529,6 +1556,13 @@ def traffic_stats(message):
     bot.send_message(message.chat.id, stats_text)
 
 
+def get_latest_db_backup_file():
+    """Возвращает путь к последнему .db бэкапу в папке бэкапов."""
+    Config.ensure_directories()
+    backup_files = sorted(Config.BACKUP_DIR.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return backup_files[0] if backup_files else None
+
+
 # Команды управления администраторами
 @bot.message_handler(commands=['manage_admins'])
 @super_admin_required
@@ -1557,6 +1591,8 @@ def admin_panel(message):
             [telebot.types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
             [telebot.types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
             [telebot.types.InlineKeyboardButton("💾 Бэкап БД", callback_data='admin_backup')],
+            [telebot.types.InlineKeyboardButton("🛠️ Fix БД из VPN", callback_data='admin_fixdb')],
+            [telebot.types.InlineKeyboardButton("♻️ Восстановить БД из бэкапа", callback_data='admin_restore_db')],
             [telebot.types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
             [telebot.types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
         ]
@@ -1613,6 +1649,51 @@ def handle_admin_actions(call):
             bot.send_message(call.message.chat.id, error_msg)
             logger.error(f"Ошибка бэкапа: {str(e)}")
         bot.answer_callback_query(call.id, "💾 Бэкап создан")
+
+    elif action == 'admin_fixdb':
+        if not db.is_super_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+            return
+
+        buttons = [
+            [telebot.types.InlineKeyboardButton("✅ Запустить fix_database.py", callback_data='confirm_fixdb')],
+            [telebot.types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_fixdb')]
+        ]
+        markup = telebot.types.InlineKeyboardMarkup(buttons)
+        bot.send_message(
+            call.message.chat.id,
+            "⚠️ Запустить восстановление пользователей через fix_database.py?\n"
+            "Скрипт добавит пользователей, найденных в VPN конфигурациях/ipsec.",
+            reply_markup=markup
+        )
+        bot.answer_callback_query(call.id, "🛠️ Подтвердите запуск")
+
+    elif action == 'admin_restore_db':
+        if not db.is_super_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+            return
+
+        latest_backup = get_latest_db_backup_file()
+        if not latest_backup:
+            bot.send_message(call.message.chat.id, "❌ В папке бэкапов нет .db файлов для восстановления")
+            bot.answer_callback_query(call.id, "❌ Нет бэкапов")
+            return
+
+        backup_time = datetime.fromtimestamp(latest_backup.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        buttons = [
+            [telebot.types.InlineKeyboardButton("✅ Восстановить из последнего бэкапа", callback_data='confirm_restore_db')],
+            [telebot.types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_restore_db')]
+        ]
+        markup = telebot.types.InlineKeyboardMarkup(buttons)
+        bot.send_message(
+            call.message.chat.id,
+            f"⚠️ Восстановить БД из последнего бэкапа?\n\n"
+            f"Файл: {latest_backup.name}\n"
+            f"Дата: {backup_time}\n\n"
+            f"Текущая БД будет перезаписана.",
+            reply_markup=markup
+        )
+        bot.answer_callback_query(call.id, "♻️ Подтвердите восстановление")
 
     elif action == 'admin_clear_db':
         buttons = [
@@ -1944,6 +2025,60 @@ def handle_clear_confirmation(call):
     else:
         bot.send_message(call.message.chat.id, "❌ Очистка отменена")
         bot.answer_callback_query(call.id, "❌ Отменено")
+
+
+@bot.callback_query_handler(
+    func=lambda call: call.data in ['confirm_fixdb', 'cancel_fixdb', 'confirm_restore_db', 'cancel_restore_db'])
+def handle_recovery_confirmation(call):
+    user_id = call.from_user.id
+
+    if not db.is_super_admin(user_id):
+        bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+        return
+
+    if call.data == 'cancel_fixdb' or call.data == 'cancel_restore_db':
+        bot.send_message(call.message.chat.id, "❌ Действие отменено")
+        bot.answer_callback_query(call.id, "❌ Отменено")
+        return
+
+    if call.data == 'confirm_fixdb':
+        bot.send_message(call.message.chat.id, "⏳ Запускаем fix_database.py...")
+        try:
+            script_path = Path(__file__).parent / 'fix_database.py'
+            result = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True,
+                text=True,
+                timeout=180
+            )
+            if result.returncode == 0:
+                output_tail = "\n".join(result.stdout.strip().splitlines()[-12:])
+                bot.send_message(call.message.chat.id, f"✅ fix_database.py выполнен успешно\n\n{output_tail}")
+                bot.answer_callback_query(call.id, "✅ Готово")
+            else:
+                error_tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-12:])
+                bot.send_message(call.message.chat.id, f"❌ Ошибка выполнения fix_database.py\n\n{error_tail}")
+                bot.answer_callback_query(call.id, "❌ Ошибка")
+        except Exception as e:
+            bot.send_message(call.message.chat.id, f"❌ Не удалось запустить fix_database.py: {str(e)}")
+            bot.answer_callback_query(call.id, "❌ Ошибка")
+        return
+
+    if call.data == 'confirm_restore_db':
+        latest_backup = get_latest_db_backup_file()
+        if not latest_backup:
+            bot.send_message(call.message.chat.id, "❌ Бэкап для восстановления не найден")
+            bot.answer_callback_query(call.id, "❌ Нет бэкапа")
+            return
+
+        bot.send_message(call.message.chat.id, f"⏳ Восстанавливаем БД из {latest_backup.name}...")
+        success, msg = db.restore_from_backup_file(latest_backup)
+        if success:
+            bot.send_message(call.message.chat.id, f"✅ {msg}")
+            bot.answer_callback_query(call.id, "✅ Восстановлено")
+        else:
+            bot.send_message(call.message.chat.id, f"❌ {msg}")
+            bot.answer_callback_query(call.id, "❌ Ошибка")
 
 
 @bot.message_handler(commands=['backup'])
