@@ -1,2 +1,4 @@
 .env
 vpn_bot.log
+__pycache__/
+*.pyc

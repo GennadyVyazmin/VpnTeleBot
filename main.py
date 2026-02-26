@@ -114,8 +114,20 @@ def main():
                 process_add_admin_manual(message, bot)
                 return
 
+            elif state.get('waiting_for_admin_forward'):
+                # Ожидаем пересланное сообщение
+                from handlers.callback_handlers import process_add_admin_forward
+                process_add_admin_forward(message, bot)
+                return
+
+            elif state.get('waiting_for_admin_contact'):
+                # Ожидаем контакт
+                from handlers.callback_handlers import process_add_admin_contact
+                process_add_admin_contact(message, bot)
+                return
+
         # Если не в состоянии ожидания ввода, показываем сообщение
-        logger.info(f"Неизвестная команда от {user_id}: {message.text}")
+        logger.info(f"Неизвестная команда от {user_id}: {getattr(message, 'text', None)}")
 
         if db.is_admin(user_id):
             bot.send_message(message.chat.id, "❓ Неизвестная команда. Используйте /start")

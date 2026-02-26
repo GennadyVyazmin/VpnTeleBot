@@ -13,6 +13,42 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+def _extract_forwarded_user(message):
+    """Извлекает пользователя из пересланного сообщения (старый и новый формат Telegram)."""
+    forward_from = getattr(message, 'forward_from', None)
+    if forward_from:
+        username = f"@{forward_from.username}" if forward_from.username else f"{forward_from.first_name}"
+        return forward_from.id, username, None
+
+    forward_origin = getattr(message, 'forward_origin', None)
+    if forward_origin:
+        sender_user = getattr(forward_origin, 'sender_user', None)
+        if sender_user:
+            username = f"@{sender_user.username}" if sender_user.username else f"{sender_user.first_name}"
+            return sender_user.id, username, None
+
+        sender_user_name = getattr(forward_origin, 'sender_user_name', None)
+        if sender_user_name:
+            return None, None, (
+                "❌ У пересланного сообщения скрыт ID отправителя.\n\n"
+                "Используйте добавление по ID вручную или выбор из пользователей бота."
+            )
+
+    return None, None, "❌ Не удалось получить данные отправителя из пересланного сообщения."
+
+
+def _clear_admin_add_state(user_id):
+    """Очищает состояния добавления админа."""
+    from handlers.user_handlers import user_states
+    if user_id in user_states:
+        state = user_states[user_id]
+        state.pop('waiting_for_admin_id', None)
+        state.pop('waiting_for_admin_forward', None)
+        state.pop('waiting_for_admin_contact', None)
+        if not state:
+            del user_states[user_id]
+
+
 def setup_callback_handlers(bot):
     """Настройка обработчиков callback запросов"""
 
@@ -728,13 +764,20 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📝 Ввод ID")
 
         elif method == 'add_forward':
-            msg = bot.send_message(
+            from handlers.user_handlers import user_states
+            user_states[user_id] = {'waiting_for_admin_forward': True}
+
+            bot.send_message(
                 call.message.chat.id,
-                "Перешлите любое сообщение от пользователя, которого хотите добавить в администраторы."
+                "Перешлите любое сообщение от пользователя, которого хотите добавить в администраторы.\n\n"
+                "Для отмены: /cancel"
             )
             bot.answer_callback_query(call.id, "🔗 Перешлите сообщение")
 
         elif method == 'add_contact':
+            from handlers.user_handlers import user_states
+            user_states[user_id] = {'waiting_for_admin_contact': True}
+
             # Запрашиваем контакт через кнопку "Поделиться контактом"
             keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
             contact_button = types.KeyboardButton("📇 Поделиться контактом", request_contact=True)
@@ -1006,6 +1049,7 @@ def show_users_list_for_admin(bot, chat_id, callback_id=None, page=0, message_id
 def process_add_admin_manual(message, bot):
     if message.text and message.text.startswith('/'):
         bot.send_message(message.chat.id, "❌ Добавление админа отменено")
+        _clear_admin_add_state(message.from_user.id)
         return
 
     try:
@@ -1020,6 +1064,7 @@ def process_add_admin_manual(message, bot):
         if db.add_admin(new_admin_id, username, Config.SUPER_ADMIN_ID):
             bot.send_message(message.chat.id,
                              f"✅ Пользователь {username} (ID: {new_admin_id}) добавлен в администраторы")
+            _clear_admin_add_state(message.from_user.id)
         else:
             bot.send_message(message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
     except ValueError:
@@ -1027,20 +1072,19 @@ def process_add_admin_manual(message, bot):
 
 
 def process_add_admin_forward(message, bot):
-    if message.text and message.text.startswith('/cancel'):
+    if message.text and (message.text.startswith('/cancel') or message.text == "❌ Отмена"):
         bot.send_message(message.chat.id, "❌ Добавление админа отменено")
+        _clear_admin_add_state(message.from_user.id)
         return
 
-    if not message.forward_from:
-        bot.send_message(message.chat.id, "❌ Не удалось получить информацию о пользователе.")
+    user_id, username, error_message = _extract_forwarded_user(message)
+    if not user_id:
+        bot.send_message(message.chat.id, error_message)
         return
-
-    forward_from = message.forward_from
-    user_id = forward_from.id
-    username = f"@{forward_from.username}" if forward_from.username else f"{forward_from.first_name}"
 
     if db.add_admin(user_id, username, Config.SUPER_ADMIN_ID):
         bot.send_message(message.chat.id, f"✅ Пользователь {username} (ID: {user_id}) добавлен в администраторы")
+        _clear_admin_add_state(message.from_user.id)
     else:
         bot.send_message(message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
 
@@ -1066,6 +1110,7 @@ def process_add_admin_contact(message, bot):
 
             if db.add_admin(user_id, username, Config.SUPER_ADMIN_ID):
                 bot.send_message(message.chat.id, f"✅ Пользователь {username} добавлен в администраторы")
+                _clear_admin_add_state(message.from_user.id)
             else:
                 bot.send_message(message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
         else:
@@ -1074,11 +1119,10 @@ def process_add_admin_contact(message, bot):
     elif message.text and message.text == "❌ Отмена":
         remove_markup = types.ReplyKeyboardRemove()
         bot.send_message(message.chat.id, "❌ Добавление админа отменено", reply_markup=remove_markup)
+        _clear_admin_add_state(message.from_user.id)
 
     else:
-        remove_markup = types.ReplyKeyboardRemove()
-        bot.send_message(message.chat.id, "❌ Не удалось получить контакт. Попробуйте еще раз.",
-                         reply_markup=remove_markup)
+        bot.send_message(message.chat.id, "❌ Не удалось получить контакт. Нажмите кнопку контакта или отправьте /cancel.")
 
 
 def send_ios_profile(bot, call, username):
