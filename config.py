@@ -10,7 +10,10 @@ load_dotenv()
 class Config:
     # Основные настройки
     BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    SUPER_ADMIN_ID = 149999149
+    try:
+        SUPER_ADMIN_ID = int(os.getenv('SUPER_ADMIN_ID', '149999149'))
+    except ValueError:
+        SUPER_ADMIN_ID = 149999149
 
     # Пути
     BASE_DIR = Path(__file__).parent
