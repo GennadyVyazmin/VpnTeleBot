@@ -778,18 +778,32 @@ def setup_callback_handlers(bot):
             from handlers.user_handlers import user_states
             user_states[user_id] = {'waiting_for_admin_contact': True}
 
-            # В Telegram request_contact=True отправляет только контакт самого отправителя.
-            # Поэтому просим отправить контакт вручную через вложения.
+            # request_contact=True отправляет только контакт отправителя.
+            # Используем request_users (если поддерживается), чтобы открыть выбор пользователя в Telegram.
             keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            request_users_supported = hasattr(types, 'KeyboardButtonRequestUsers')
+            if request_users_supported:
+                request = types.KeyboardButtonRequestUsers(
+                    request_id=1,
+                    user_is_bot=False
+                )
+                keyboard.add(types.KeyboardButton("👥 Выбрать пользователя", request_users=request))
             keyboard.add(types.KeyboardButton("❌ Отмена"))
 
-            bot.send_message(
-                call.message.chat.id,
-                "Отправьте контакт пользователя вручную:\n"
-                "Скрепка -> Контакт -> выбрать пользователя.\n\n"
-                "Важно: добавить получится только если Telegram передаст user_id этого контакта.",
-                reply_markup=keyboard
-            )
+            if request_users_supported:
+                text = (
+                    "Нажмите «👥 Выбрать пользователя» и выберите нужного человека.\n\n"
+                    "Если кнопка не работает в вашем клиенте Telegram, отправьте контакт вручную:\n"
+                    "Скрепка -> Контакт."
+                )
+            else:
+                text = (
+                    "Ваша версия библиотеки не поддерживает кнопку выбора пользователя.\n"
+                    "Отправьте контакт вручную:\n"
+                    "Скрепка -> Контакт -> выбрать пользователя."
+                )
+
+            bot.send_message(call.message.chat.id, text, reply_markup=keyboard)
             bot.answer_callback_query(call.id, "📇 Запрос контакта")
 
         elif method == 'add_from_users':
@@ -1092,6 +1106,35 @@ def process_add_admin_forward(message, bot):
 
 def process_add_admin_contact(message, bot):
     """Обработчик добавления администратора через контакт"""
+    if message.content_type == 'users_shared':
+        users_shared = getattr(message, 'users_shared', None)
+        users = getattr(users_shared, 'users', None) if users_shared else None
+        if not users:
+            bot.send_message(message.chat.id, "❌ Пользователь не выбран. Попробуйте снова.")
+            return
+
+        selected = users[0]
+        selected_user_id = getattr(selected, 'user_id', None)
+        if not selected_user_id:
+            bot.send_message(message.chat.id, "❌ Не удалось получить ID выбранного пользователя.")
+            return
+
+        if selected_user_id == message.from_user.id:
+            bot.send_message(message.chat.id, "❌ Вы выбрали себя. Выберите другого пользователя.")
+            return
+
+        username = f"Пользователь {selected_user_id}"
+        if db.add_admin(selected_user_id, username, Config.SUPER_ADMIN_ID):
+            bot.send_message(
+                message.chat.id,
+                f"✅ Пользователь {username} (ID: {selected_user_id}) добавлен в администраторы",
+                reply_markup=types.ReplyKeyboardRemove()
+            )
+            _clear_admin_add_state(message.from_user.id)
+        else:
+            bot.send_message(message.chat.id, "❌ Не удалось добавить пользователя в администраторы")
+        return
+
     if message.content_type == 'contact':
         contact = message.contact
 
