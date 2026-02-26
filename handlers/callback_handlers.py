@@ -10,6 +10,40 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+def _extract_forwarded_user(message):
+    """
+    Возвращает (user_id, username, error_message) из пересланного сообщения.
+    Поддерживает как старые поля forward_from, так и новые forward_origin.
+    """
+    forward_from = getattr(message, 'forward_from', None)
+    if forward_from:
+        username = f"@{forward_from.username}" if forward_from.username else f"{forward_from.first_name}"
+        return forward_from.id, username, None
+
+    # Для новых версий Telegram Bot API
+    forward_origin = getattr(message, 'forward_origin', None)
+    if forward_origin:
+        sender_user = getattr(forward_origin, 'sender_user', None)
+        if sender_user:
+            username = f"@{sender_user.username}" if sender_user.username else f"{sender_user.first_name}"
+            return sender_user.id, username, None
+
+        # Если пользователь скрыл аккаунт при пересылке - ID недоступен
+        sender_user_name = getattr(forward_origin, 'sender_user_name', None)
+        if sender_user_name:
+            return None, None, (
+                "❌ У этого пересланного сообщения скрыт ID отправителя.\n\n"
+                "Добавление невозможно через пересылку. Используйте:\n"
+                "• 📝 Ввести ID вручную\n"
+                "• 📇 Выбрать из контакта (если у контакта есть Telegram ID)"
+            )
+
+    return None, None, (
+        "❌ Не удалось получить отправителя из пересланного сообщения.\n\n"
+        "Проверьте, что это именно пересылка, а не скопированный текст."
+    )
+
+
 def setup_callback_handlers(bot):
     """Настройка обработчиков callback запросов"""
 
@@ -190,6 +224,7 @@ def setup_callback_handlers(bot):
                 buttons = [
                     [types.InlineKeyboardButton("📝 Ввести ID вручную", callback_data='add_manual')],
                     [types.InlineKeyboardButton("🔗 Переслать сообщение", callback_data='add_forward')],
+                    [types.InlineKeyboardButton("📇 Выбрать из контакта", callback_data='add_contact')],
                     [types.InlineKeyboardButton("❌ Отмена", callback_data='add_cancel')]
                 ]
                 markup = types.InlineKeyboardMarkup(buttons)
@@ -304,10 +339,24 @@ def setup_callback_handlers(bot):
         elif method == 'add_forward':
             msg = bot.send_message(
                 call.message.chat.id,
-                "Перешлите любое сообщение от пользователя, которого хотите добавить в администраторы."
+                "Перешлите любое сообщение от пользователя, которого хотите добавить в администраторы.\n\n"
+                "Если Telegram скрывает ID при пересылке, используйте добавление по ID или через контакт."
             )
             bot.register_next_step_handler(msg, process_add_admin_forward, bot)
             bot.answer_callback_query(call.id, "🔗 Перешлите сообщение")
+
+        elif method == 'add_contact':
+            keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            keyboard.add(types.KeyboardButton("📱 Отправить мой контакт", request_contact=True))
+            keyboard.add(types.KeyboardButton("❌ Отмена"))
+            msg = bot.send_message(
+                call.message.chat.id,
+                "Отправьте контакт пользователя.\n\n"
+                "Важно: Telegram передает ID только если контакт связан с Telegram-аккаунтом.",
+                reply_markup=keyboard
+            )
+            bot.register_next_step_handler(msg, process_add_admin_contact, bot)
+            bot.answer_callback_query(call.id, "📇 Отправьте контакт")
 
         elif method == 'add_cancel':
             bot.send_message(call.message.chat.id, "❌ Добавление админа отменено")
@@ -342,18 +391,57 @@ def process_add_admin_forward(message, bot):
         bot.send_message(message.chat.id, "❌ Добавление админа отменено")
         return
 
-    if not message.forward_from:
-        bot.send_message(message.chat.id, "❌ Не удалось получить информацию о пользователе.")
+    user_id, username, error_message = _extract_forwarded_user(message)
+    if not user_id:
+        bot.send_message(message.chat.id, error_message)
         return
-
-    forward_from = message.forward_from
-    user_id = forward_from.id
-    username = f"@{forward_from.username}" if forward_from.username else f"{forward_from.first_name}"
 
     if db.add_admin(user_id, username, Config.SUPER_ADMIN_ID):
         bot.send_message(message.chat.id, f"✅ Пользователь {username} (ID: {user_id}) добавлен в администраторы")
     else:
         bot.send_message(message.chat.id, f"❌ Не удалось добавить пользователя в администраторы")
+
+
+def process_add_admin_contact(message, bot):
+    if message.text and (message.text.startswith('/cancel') or message.text == "❌ Отмена"):
+        bot.send_message(message.chat.id, "❌ Добавление админа отменено", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    contact = getattr(message, 'contact', None)
+    if not contact:
+        bot.send_message(
+            message.chat.id,
+            "❌ Контакт не получен. Отправьте контакт или используйте ввод ID вручную.",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        return
+
+    contact_user_id = getattr(contact, 'user_id', None)
+    if not contact_user_id:
+        bot.send_message(
+            message.chat.id,
+            "❌ У контакта нет Telegram ID, поэтому добавить его нельзя.\n"
+            "Используйте добавление по ID вручную.",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        return
+
+    first_name = getattr(contact, 'first_name', '') or ''
+    last_name = getattr(contact, 'last_name', '') or ''
+    full_name = (first_name + (' ' + last_name if last_name else '')).strip()
+    username = full_name if full_name else f"Пользователь {contact_user_id}"
+    if db.add_admin(contact_user_id, username, Config.SUPER_ADMIN_ID):
+        bot.send_message(
+            message.chat.id,
+            f"✅ Пользователь {username} (ID: {contact_user_id}) добавлен в администраторы",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            f"❌ Не удалось добавить пользователя в администраторы",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
 
 
 def send_ios_profile(bot, call, username):
