@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$PROJECT_DIR/.venv"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="vpn-telebot"
-ENV_FILE="$PROJECT_DIR/.env"
+REPO_OWNER="${REPO_OWNER:-GennadyVyazmin}"
+REPO_NAME="${REPO_NAME:-VpnTeleBot}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+REPO_TARBALL_URL="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_BRANCH}"
+DEFAULT_INSTALL_DIR="/opt/VpnTeleBot"
 
 echo "=== VPN TeleBot installer ==="
-echo "Project dir: $PROJECT_DIR"
+echo "Bootstrap mode: this script can install from scratch."
 echo
 
 ask_yes_no() {
@@ -28,6 +31,14 @@ ask_yes_no() {
       *) echo "Please answer yes or no." ;;
     esac
   done
+}
+
+ask_with_default() {
+  local prompt="$1"
+  local default="$2"
+  local value
+  read -r -p "$prompt [$default]: " value
+  printf "%s" "${value:-$default}"
 }
 
 ask_non_empty() {
@@ -52,18 +63,65 @@ ask_numeric() {
   done
 }
 
-if ask_yes_no "Install system packages (python3, venv, pip, sqlite3)?" "y"; then
+fetch_file() {
+  local url="$1"
+  local out="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$out"
+    return 0
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -qO "$out" "$url"
+    return 0
+  fi
+  echo "Neither curl nor wget found."
+  return 1
+}
+
+if ask_yes_no "Install system packages (python3, venv, pip, sqlite3, tar, curl/wget)?" "y"; then
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv python3-pip sqlite3
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv python3-pip sqlite3 tar curl wget
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y python3 python3-pip python3-virtualenv sqlite
+    dnf install -y python3 python3-pip python3-virtualenv sqlite tar curl wget
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y python3 python3-pip
+    yum install -y python3 python3-pip tar curl wget
   else
     echo "No supported package manager found. Install Python dependencies manually."
   fi
 fi
+
+PROJECT_DIR=""
+if [[ -f "$SCRIPT_DIR/main.py" && -f "$SCRIPT_DIR/requirements.txt" ]]; then
+  PROJECT_DIR="$SCRIPT_DIR"
+  echo "Detected project files next to install.sh, using: $PROJECT_DIR"
+else
+  TARGET_DIR="$(ask_with_default "Enter install directory" "$DEFAULT_INSTALL_DIR")"
+  PROJECT_DIR="$TARGET_DIR"
+
+  echo "Downloading project from:"
+  echo "  $REPO_TARBALL_URL"
+
+  TMP_DIR="$(mktemp -d)"
+  ARCHIVE_PATH="$TMP_DIR/${REPO_NAME}.tar.gz"
+
+  fetch_file "$REPO_TARBALL_URL" "$ARCHIVE_PATH"
+  tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
+
+  EXTRACTED_DIR="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  if [[ -z "$EXTRACTED_DIR" ]]; then
+    echo "Failed to extract project archive."
+    exit 1
+  fi
+
+  mkdir -p "$PROJECT_DIR"
+  cp -a "$EXTRACTED_DIR"/. "$PROJECT_DIR"/
+  rm -rf "$TMP_DIR"
+  echo "Project downloaded to: $PROJECT_DIR"
+fi
+
+VENV_DIR="$PROJECT_DIR/.venv"
+ENV_FILE="$PROJECT_DIR/.env"
 
 if [[ -f "$ENV_FILE" ]]; then
   if ask_yes_no ".env already exists. Overwrite it?" "n"; then
