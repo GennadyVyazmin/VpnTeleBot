@@ -36,14 +36,16 @@ sudo journalctl -u vpn-telebot -n 100 --no-pager
 
 ## Обновление
 
+`<INSTALL_DIR>` — это путь установки, который вы указали в `install.sh` (по умолчанию `/opt/VpnTeleBot`).
+
 ```bash
-cd /opt/VpnTeleBot
+cd <INSTALL_DIR>
 sudo ./update.sh
 ```
 
 ## Удаление
 
 ```bash
-cd /opt/VpnTeleBot
+cd <INSTALL_DIR>
 sudo ./uninstall.sh
 ```
