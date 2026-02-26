@@ -553,11 +553,14 @@ def send_ios_profile(bot, call, username):
     bot.send_message(call.message.chat.id, f"📱 Отправка профиля для iOS ({username})...")
     bot.send_message(
         call.message.chat.id,
-        f"📘 Инструкция iOS:\n"
-        f"1. Скачайте и откройте файл профиля из сообщения ниже.\n"
-        f"2. Разрешите установку профиля в настройках iPhone.\n"
-        f"3. Зайдите: Настройки -> VPN и включите профиль.\n"
-        f"4. Сервер: {server_ip}"
+        f"📘 Инструкция для iOS\n\n"
+        f"1. 📥 Откройте файл в Telegram.\n"
+        f"2. 📤 Нажмите «Поделиться» -> «Сохранить в Файлы».\n"
+        f"3. 📂 Откройте приложение «Файлы» -> «Недавние» и запустите сохраненный файл.\n"
+        f"4. ⚙️ Нажмите «Установить профиль».\n"
+        f"5. 🔐 Перейдите в «Настройки» -> «Загружен профиль», подтвердите установку и введите пароль.\n"
+        f"6. ✅ Готово: подключение появится в «Настройки» -> «VPN».\n\n"
+        f"🌐 Сервер: {server_ip}"
     )
 
     file_path = vpn_manager.get_profile_path(username, 'ios')
@@ -573,11 +576,18 @@ def send_android_profile(bot, call, username):
     bot.send_message(call.message.chat.id, f"🤖 Отправка профиля для Android v11+ ({username})...")
     bot.send_message(
         call.message.chat.id,
-        f"📘 Инструкция Android v11+:\n"
-        f"1. Установите приложение StrongSwan из Google Play.\n"
-        f"2. Импортируйте профиль из файла ниже.\n"
-        f"3. Подключитесь к созданному профилю VPN.\n"
-        f"4. Сервер: {server_ip}"
+        f"📘 Инструкция для Android v11+\n\n"
+        f"1. 📥 Скачайте файл из сообщения ниже.\n"
+        f"2. 📂 Перейдите в «Файлы» -> Telegram и откройте скачанный сертификат.\n"
+        f"3. 🔐 Нажмите «Установить сертификат».\n"
+        f"4. ⚙️ Перейдите в «Настройки» -> «Подключения» -> «VPN» (или аналогичный раздел) и нажмите «+».\n"
+        f"5. 📝 Введите имя VPN-профиля.\n"
+        f"6. 🔽 Выберите тип «IKEv2/IPSec RSA».\n"
+        f"7. 🌐 Введите адрес сервера: {server_ip}\n"
+        f"8. 🆔 Если есть поле идентификатора IPSec, укажите любое значение.\n"
+        f"9. 👤 В «Сертификат пользователя» выберите импортированный сертификат и сохраните.\n"
+        f"10. 🛡️ В «Сертификат ЦС IPSec» выберите тот же импортированный сертификат.\n"
+        f"11. ✅ Сохраните профиль и подключитесь."
     )
 
     file_path = vpn_manager.get_profile_path(username, 'android')
@@ -593,11 +603,17 @@ def send_sswan_profile(bot, call, username):
     bot.send_message(call.message.chat.id, f"🤖 Отправка профиля для StrongSwan ({username})...")
     bot.send_message(
         call.message.chat.id,
-        f"📘 Инструкция StrongSwan (Android до v11):\n"
-        f"1. Установите StrongSwan VPN Client.\n"
-        f"2. Импортируйте профиль из файла ниже.\n"
-        f"3. Запустите подключение из приложения.\n"
-        f"4. Сервер: {server_ip}"
+        f"📘 Инструкция для Android до 11 (StrongSwan)\n\n"
+        f"1. 📥 Сохраните файл в «Загрузки».\n"
+        f"2. 🛠️ Установите StrongSwan VPN Client (Google Play / F-Droid / strongSwan download server).\n"
+        f"3. ▶️ Запустите приложение StrongSwan VPN Client.\n"
+        f"4. ⋮ Нажмите «More options» (справа сверху) -> «Import VPN profile».\n"
+        f"5. 📄 Выберите сохраненный файл `.sswan`.\n"
+        f"6. 🔐 В окне импорта нажмите «IMPORT CERTIFICATE FROM VPN PROFILE» и следуйте шагам.\n"
+        f"7. 📜 На экране «Choose certificate» выберите новый сертификат и нажмите «Выбрать».\n"
+        f"8. ⬇️ Нажмите «IMPORT».\n"
+        f"9. ✅ Нажмите на созданный VPN-профиль для подключения.\n\n"
+        f"🌐 Сервер: {server_ip}"
     )
 
     file_path = vpn_manager.get_profile_path(username, 'sswan')
@@ -613,11 +629,15 @@ def send_macos_profile(bot, call, username):
     bot.send_message(call.message.chat.id, f"💻 Отправка профиля для MacOS ({username})...")
     bot.send_message(
         call.message.chat.id,
-        f"📘 Инструкция macOS:\n"
-        f"1. Откройте профиль из файла ниже.\n"
-        f"2. Подтвердите установку VPN-конфигурации в системных настройках.\n"
-        f"3. Включите VPN-подключение.\n"
-        f"4. Сервер: {server_ip}"
+        f"📘 Инструкция для macOS\n\n"
+        f"1. 📥 Сохраните файл из сообщения ниже.\n"
+        f"2. 🖱️ Запустите файл двойным кликом, дождитесь сообщения «Профиль загружен» и нажмите OK.\n"
+        f"3. ⚙️ Перейдите в «Настройки» -> «Профиль загружен».\n"
+        f"4. 🔁 Дважды нажмите на добавленный профиль и выберите «Установить».\n"
+        f"5. 🔐 Введите пароль пользователя macOS для разблокировки.\n"
+        f"6. ⏳ Дождитесь завершения установки.\n"
+        f"7. ✅ Подключение появится в «Настройки» -> «VPN», включите его.\n\n"
+        f"🌐 Сервер: {server_ip}"
     )
 
     file_path = vpn_manager.get_profile_path(username, 'macos')
@@ -633,11 +653,16 @@ def send_windows_profile(bot, call, username):
     bot.send_message(call.message.chat.id, f"🪟 Отправка профиля для Windows ({username})...")
     bot.send_message(
         call.message.chat.id,
-        f"📘 Инструкция Windows:\n"
-        f"1. Импортируйте сертификат из файла ниже.\n"
-        f"2. Создайте IKEv2 VPN-подключение в параметрах сети Windows.\n"
-        f"3. Укажите данные пользователя и подключитесь.\n"
-        f"4. Сервер: {server_ip}"
+        f"📘 Инструкция для Windows\n\n"
+        f"1. 📥 Сохраните файлы `.p12`, `ikev2_config_import.cmd` и "
+        f"`Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg` на компьютер.\n"
+        f"2. 📂 Поместите `ikev2_config_import.cmd` в одну папку с `.p12`.\n"
+        f"3. 🖱️ Нажмите правой кнопкой по `ikev2_config_import.cmd` -> «Свойства», "
+        f"нажмите «Разблокировать» внизу и OK.\n"
+        f"4. 🛡️ Снова нажмите правой кнопкой по `ikev2_config_import.cmd` и запустите от имени администратора.\n"
+        f"5. 🧭 Следуйте инструкциям мастера.\n"
+        f"6. 🌐 При запросе IP введите: {server_ip}\n"
+        f"7. ⚡ Запустите `Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg` и нажмите «Выполнить»."
     )
 
     # Основной файл P12
