@@ -31,6 +31,8 @@ def setup_admin_handlers(bot):
                 [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
                 [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
                 [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')],
+                [types.InlineKeyboardButton("🛠️ Fix БД из VPN", callback_data='admin_fixdb')],
+                [types.InlineKeyboardButton("♻️ Восстановить БД из бэкапа", callback_data='admin_restore_db')],
                 [types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
                 [types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
             ]

@@ -3,6 +3,8 @@ import telebot
 import logging
 import subprocess
 import threading
+import sys
+from pathlib import Path
 from telebot import types
 from database import db
 from vpn_manager import vpn_manager
@@ -48,6 +50,12 @@ def _clear_admin_add_state(user_id):
         state.pop('waiting_for_admin_contact', None)
         if not state:
             del user_states[user_id]
+
+
+def _get_latest_db_backup_file():
+    Config.ensure_directories()
+    backup_files = sorted(Config.BACKUP_DIR.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return backup_files[0] if backup_files else None
 
 
 def setup_callback_handlers(bot):
@@ -211,6 +219,8 @@ def setup_callback_handlers(bot):
                     [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
                     [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
                     [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')],
+                    [types.InlineKeyboardButton("🛠️ Fix БД из VPN", callback_data='admin_fixdb')],
+                    [types.InlineKeyboardButton("♻️ Восстановить БД из бэкапа", callback_data='admin_restore_db')],
                     [types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
                     [types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
                 ]
@@ -596,6 +606,51 @@ def setup_callback_handlers(bot):
             bot.send_message(call.message.chat.id, backup_text)
             bot.answer_callback_query(call.id, "📋 Список бэкапов")
 
+        elif action == 'admin_fixdb':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            buttons = [
+                [types.InlineKeyboardButton("✅ Запустить fix_database.py", callback_data='confirm_fixdb')],
+                [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_fixdb')]
+            ]
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(
+                call.message.chat.id,
+                "⚠️ Запустить восстановление пользователей через fix_database.py?\n"
+                "Скрипт добавит пользователей, найденных в VPN конфигурациях/ipsec.",
+                reply_markup=markup
+            )
+            bot.answer_callback_query(call.id, "🛠️ Подтвердите запуск")
+
+        elif action == 'admin_restore_db':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            latest_backup = _get_latest_db_backup_file()
+            if not latest_backup:
+                bot.send_message(call.message.chat.id, "❌ В папке бэкапов нет .db файлов для восстановления")
+                bot.answer_callback_query(call.id, "❌ Нет бэкапов")
+                return
+
+            backup_time = datetime.fromtimestamp(latest_backup.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            buttons = [
+                [types.InlineKeyboardButton("✅ Восстановить из последнего бэкапа", callback_data='confirm_restore_db')],
+                [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_restore_db')]
+            ]
+            markup = types.InlineKeyboardMarkup(buttons)
+            bot.send_message(
+                call.message.chat.id,
+                f"⚠️ Восстановить БД из последнего бэкапа?\n\n"
+                f"Файл: {latest_backup.name}\n"
+                f"Дата: {backup_time}\n\n"
+                f"Текущая БД будет перезаписана.",
+                reply_markup=markup
+            )
+            bot.answer_callback_query(call.id, "♻️ Подтвердите восстановление")
+
         elif action == 'admin_clear_db':
             buttons = [
                 [types.InlineKeyboardButton("✅ Создать бэкап и очистить", callback_data='confirm_clear_with_backup')],
@@ -723,6 +778,59 @@ def setup_callback_handlers(bot):
         else:
             bot.send_message(call.message.chat.id, "❌ Ошибка очистки базы данных")
             bot.answer_callback_query(call.id, "❌ Ошибка очистки")
+
+    @bot.callback_query_handler(
+        func=lambda call: call.data in ['confirm_fixdb', 'cancel_fixdb', 'confirm_restore_db', 'cancel_restore_db'])
+    def handle_recovery_confirmation(call):
+        user_id = call.from_user.id
+
+        if not db.is_super_admin(user_id):
+            bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+            return
+
+        if call.data in ['cancel_fixdb', 'cancel_restore_db']:
+            bot.send_message(call.message.chat.id, "❌ Действие отменено")
+            bot.answer_callback_query(call.id, "❌ Отменено")
+            return
+
+        if call.data == 'confirm_fixdb':
+            bot.send_message(call.message.chat.id, "⏳ Запускаем fix_database.py...")
+            try:
+                script_path = Path(__file__).resolve().parent.parent / 'fix_database.py'
+                result = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=180
+                )
+                if result.returncode == 0:
+                    output_tail = "\n".join(result.stdout.strip().splitlines()[-12:])
+                    bot.send_message(call.message.chat.id, f"✅ fix_database.py выполнен успешно\n\n{output_tail}")
+                    bot.answer_callback_query(call.id, "✅ Готово")
+                else:
+                    error_tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-12:])
+                    bot.send_message(call.message.chat.id, f"❌ Ошибка выполнения fix_database.py\n\n{error_tail}")
+                    bot.answer_callback_query(call.id, "❌ Ошибка")
+            except Exception as e:
+                bot.send_message(call.message.chat.id, f"❌ Не удалось запустить fix_database.py: {str(e)}")
+                bot.answer_callback_query(call.id, "❌ Ошибка")
+            return
+
+        if call.data == 'confirm_restore_db':
+            latest_backup = _get_latest_db_backup_file()
+            if not latest_backup:
+                bot.send_message(call.message.chat.id, "❌ Бэкап для восстановления не найден")
+                bot.answer_callback_query(call.id, "❌ Нет бэкапа")
+                return
+
+            bot.send_message(call.message.chat.id, f"⏳ Восстанавливаем БД из {latest_backup.name}...")
+            success, msg = db.restore_from_backup_file(latest_backup)
+            if success:
+                bot.send_message(call.message.chat.id, f"✅ {msg}")
+                bot.answer_callback_query(call.id, "✅ Восстановлено")
+            else:
+                bot.send_message(call.message.chat.id, f"❌ {msg}")
+                bot.answer_callback_query(call.id, "❌ Ошибка")
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('remove_admin_'))
     def handle_remove_admin(call):

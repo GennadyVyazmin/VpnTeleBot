@@ -52,6 +52,33 @@ class Database:
     def commit(self):
         self.conn.commit()
 
+    def restore_from_backup_file(self, backup_file_path):
+        """Восстанавливает текущую БД из файла бэкапа."""
+        try:
+            backup_path = Path(backup_file_path)
+            if not backup_path.exists():
+                return False, f"Файл бэкапа не найден: {backup_path}"
+
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+
+            shutil.copy2(backup_path, self.db_path)
+
+            wal_file = Path(str(self.db_path) + "-wal")
+            shm_file = Path(str(self.db_path) + "-shm")
+            if wal_file.exists():
+                wal_file.unlink()
+            if shm_file.exists():
+                shm_file.unlink()
+
+            self.conn = self._create_connection()
+            return True, "База данных восстановлена из бэкапа"
+        except Exception as e:
+            logger.error(f"Ошибка восстановления БД: {str(e)}")
+            return False, f"Ошибка восстановления БД: {str(e)}"
+
     def _create_tables(self):
         """Создание всех необходимых таблиц"""
         try:
