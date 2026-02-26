@@ -67,6 +67,7 @@ cleanup_function = check_single_instance()
 # Конфигурация
 class Config:
     DB_PATH = 'users.db'
+    BACKUP_DIR = Path('bacup_database')
     SUPER_ADMIN_ID = 149999149
     BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
@@ -76,6 +77,10 @@ class Config:
     MIN_USERNAME_LENGTH = 3
     MAX_USERNAME_LENGTH = 20
     USERNAME_PATTERN = r'^[a-zA-Z0-9_-]+$'
+
+    @classmethod
+    def ensure_directories(cls):
+        cls.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # Настройка логирования
@@ -103,6 +108,7 @@ if not os.access(Config.IKEV2_SCRIPT_PATH, os.X_OK):
 
 logger.info(f"Скрипт ikev2.sh найден: {Config.IKEV2_SCRIPT_PATH}")
 logger.info(f"Директория конфигураций: {Config.VPN_PROFILES_PATH}")
+Config.ensure_directories()
 
 bot = telebot.TeleBot(Config.BOT_TOKEN)
 
@@ -1594,13 +1600,13 @@ def handle_admin_actions(call):
     elif action == 'admin_backup':
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = f"backup_users_{timestamp}.db"
+            Config.ensure_directories()
+            backup_file = Config.BACKUP_DIR / f"backup_users_{timestamp}.db"
             shutil.copy2(Config.DB_PATH, backup_file)
 
-            bot.send_document(call.message.chat.id, open(backup_file, 'rb'), caption="💾 Бэкап базы данных")
+            with open(backup_file, 'rb') as f:
+                bot.send_document(call.message.chat.id, f, caption="💾 Бэкап базы данных")
             bot.send_message(call.message.chat.id, "✅ Бэкап создан успешно")
-
-            os.remove(backup_file)
 
         except Exception as e:
             error_msg = f"❌ Ошибка создания бэкапа: {str(e)}"
@@ -1949,13 +1955,13 @@ def backup_database(message):
 
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"backup_users_{timestamp}.db"
+        Config.ensure_directories()
+        backup_file = Config.BACKUP_DIR / f"backup_users_{timestamp}.db"
         shutil.copy2(Config.DB_PATH, backup_file)
 
-        bot.send_document(message.chat.id, open(backup_file, 'rb'), caption="💾 Бэкап базы данных")
+        with open(backup_file, 'rb') as f:
+            bot.send_document(message.chat.id, f, caption="💾 Бэкап базы данных")
         bot.send_message(message.chat.id, "✅ Бэкап создан успешно")
-
-        os.remove(backup_file)
 
     except Exception as e:
         error_msg = f"❌ Ошибка создания бэкапа: {str(e)}"
