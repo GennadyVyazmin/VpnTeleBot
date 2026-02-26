@@ -3,6 +3,8 @@ import logging
 import time
 import json
 import shutil
+import hashlib
+import re
 from datetime import datetime, timedelta
 from sqlite3 import OperationalError
 from pathlib import Path
@@ -30,7 +32,7 @@ class Database:
                 )
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA busy_timeout=30000")
-                conn.execute("PRAGMA foreign_keys = ON")
+                conn.execute("PRAGMA foreign_keys = OFF")  # Временно отключаем
                 logger.info("Соединение с БД установлено")
                 return conn
             except OperationalError as e:
@@ -50,103 +52,143 @@ class Database:
     def commit(self):
         self.conn.commit()
 
+    def restore_from_backup_file(self, backup_file_path):
+        """Восстанавливает текущую БД из файла бэкапа."""
+        try:
+            backup_path = Path(backup_file_path)
+            if not backup_path.exists():
+                return False, f"Файл бэкапа не найден: {backup_path}"
+
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+
+            shutil.copy2(backup_path, self.db_path)
+
+            wal_file = Path(str(self.db_path) + "-wal")
+            shm_file = Path(str(self.db_path) + "-shm")
+            if wal_file.exists():
+                wal_file.unlink()
+            if shm_file.exists():
+                shm_file.unlink()
+
+            self.conn = self._create_connection()
+            return True, "База данных восстановлена из бэкапа"
+        except Exception as e:
+            logger.error(f"Ошибка восстановления БД: {str(e)}")
+            return False, f"Ошибка восстановления БД: {str(e)}"
+
     def _create_tables(self):
         """Создание всех необходимых таблиц"""
         try:
+            # Получаем существующие таблицы
+            cursor = self.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            existing_tables = [row[0] for row in cursor.fetchall()]
+
             # Таблица пользователей
-            self.execute('''CREATE TABLE IF NOT EXISTS users (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          username TEXT UNIQUE NOT NULL,
-                          created_by INTEGER NOT NULL,
-                          created_by_username TEXT NOT NULL,
-                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                          total_connections INTEGER DEFAULT 0,
-                          last_connected TIMESTAMP,
-                          total_bytes_sent BIGINT DEFAULT 0,
-                          total_bytes_received BIGINT DEFAULT 0,
-                          is_active BOOLEAN DEFAULT 0,
-                          last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                       )''')
+            if 'users' not in existing_tables:
+                self.execute('''CREATE TABLE users (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              username TEXT UNIQUE NOT NULL,
+                              created_by INTEGER NOT NULL,
+                              created_by_username TEXT NOT NULL,
+                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              total_connections INTEGER DEFAULT 0,
+                              last_connected TIMESTAMP,
+                              total_bytes_sent BIGINT DEFAULT 0,
+                              total_bytes_received BIGINT DEFAULT 0,
+                              is_active BOOLEAN DEFAULT 0,
+                              last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                           )''')
+            else:
+                # Проверяем колонки
+                cursor = self.execute("PRAGMA table_info(users)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'last_updated' not in columns:
+                    try:
+                        self.execute("ALTER TABLE users ADD COLUMN last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    except:
+                        pass
 
             # Таблица администраторов
-            self.execute('''CREATE TABLE IF NOT EXISTS admins (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          user_id INTEGER UNIQUE NOT NULL,
-                          username TEXT NOT NULL,
-                          added_by INTEGER NOT NULL,
-                          added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                       )''')
+            if 'admins' not in existing_tables:
+                self.execute('''CREATE TABLE admins (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              user_id INTEGER UNIQUE NOT NULL,
+                              username TEXT NOT NULL,
+                              added_by INTEGER NOT NULL,
+                              added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                           )''')
+                # Добавляем супер-админа
+                self.execute("INSERT OR IGNORE INTO admins (user_id, username, added_by) VALUES (?, ?, ?)",
+                             (Config.SUPER_ADMIN_ID, "Супер-админ", Config.SUPER_ADMIN_ID))
 
-            # Таблица детальной статистики
-            self.execute('''CREATE TABLE IF NOT EXISTS user_stats (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          username TEXT NOT NULL,
-                          connection_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                          connection_end TIMESTAMP,
-                          duration_seconds INTEGER,
-                          bytes_sent BIGINT DEFAULT 0,
-                          bytes_received BIGINT DEFAULT 0,
-                          client_ip TEXT,
-                          status TEXT DEFAULT 'completed',
-                          session_id TEXT,
-                          FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
-                       )''')
+            # Таблица статистики
+            if 'user_stats' not in existing_tables:
+                self.execute('''CREATE TABLE user_stats (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              username TEXT NOT NULL,
+                              connection_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              connection_end TIMESTAMP,
+                              duration_seconds INTEGER,
+                              bytes_sent BIGINT DEFAULT 0,
+                              bytes_received BIGINT DEFAULT 0,
+                              client_ip TEXT,
+                              status TEXT DEFAULT 'completed',
+                              session_id TEXT
+                           )''')
+            else:
+                # Проверяем наличие session_id
+                cursor = self.execute("PRAGMA table_info(user_stats)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'session_id' not in columns:
+                    try:
+                        self.execute("ALTER TABLE user_stats ADD COLUMN session_id TEXT")
+                    except:
+                        pass
 
-            # Таблица ежедневной статистики
-            self.execute('''CREATE TABLE IF NOT EXISTS traffic_log (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          username TEXT NOT NULL,
-                          log_date DATE NOT NULL,
-                          bytes_sent BIGINT DEFAULT 0,
-                          bytes_received BIGINT DEFAULT 0,
-                          connections_count INTEGER DEFAULT 0,
-                          UNIQUE(username, log_date),
-                          FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
-                       )''')
+            # Таблица ежедневного трафика
+            if 'traffic_log' not in existing_tables:
+                self.execute('''CREATE TABLE traffic_log (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              username TEXT NOT NULL,
+                              log_date DATE NOT NULL,
+                              bytes_sent BIGINT DEFAULT 0,
+                              bytes_received BIGINT DEFAULT 0,
+                              connections_count INTEGER DEFAULT 0,
+                              UNIQUE(username, log_date)
+                           )''')
 
-            # ТАБЛИЦА АКТИВНЫХ СЕССИЙ (ДЛЯ ПРАВИЛЬНОГО ПОДСЧЕТА ТРАФИКА)
-            self.execute('''CREATE TABLE IF NOT EXISTS active_sessions (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          username TEXT NOT NULL,
-                          connection_id TEXT NOT NULL,
-                          session_hash TEXT NOT NULL,
-                          last_bytes_sent BIGINT DEFAULT 0,
-                          last_bytes_received BIGINT DEFAULT 0,
-                          client_ip TEXT,
-                          first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                          last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                          UNIQUE(username, connection_id, session_hash),
-                          FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
-                       )''')
+            # Таблица активных сессий
+            if 'active_sessions' not in existing_tables:
+                self.execute('''CREATE TABLE active_sessions (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              username TEXT NOT NULL,
+                              connection_id TEXT NOT NULL,
+                              session_hash TEXT NOT NULL,
+                              last_bytes_sent BIGINT DEFAULT 0,
+                              last_bytes_received BIGINT DEFAULT 0,
+                              client_ip TEXT,
+                              first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              UNIQUE(username, connection_id, session_hash)
+                           )''')
 
-            # Таблица для резервных копий завершенных сессий
-            self.execute('''CREATE TABLE IF NOT EXISTS session_backup (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          username TEXT NOT NULL,
-                          connection_id TEXT NOT NULL,
-                          session_hash TEXT NOT NULL,
-                          total_bytes_sent BIGINT DEFAULT 0,
-                          total_bytes_received BIGINT DEFAULT 0,
-                          start_time TIMESTAMP,
-                          end_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                          backup_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                          backup_reason TEXT,
-                          FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
-                       )''')
-
-            # Индексы для производительности
-            self.execute('''CREATE INDEX IF NOT EXISTS idx_active_sessions_username 
-                          ON active_sessions(username)''')
-            self.execute('''CREATE INDEX IF NOT EXISTS idx_user_stats_username 
-                          ON user_stats(username)''')
-            self.execute('''CREATE INDEX IF NOT EXISTS idx_traffic_log_username_date 
-                          ON traffic_log(username, log_date)''')
-            self.execute('''CREATE INDEX IF NOT EXISTS idx_user_stats_active 
-                          ON user_stats(username, status) WHERE status = 'active' ''')
-
-            # Добавляем супер-админа
-            self.execute("INSERT OR IGNORE INTO admins (user_id, username, added_by) VALUES (?, ?, ?)",
-                         (Config.SUPER_ADMIN_ID, "Супер-админ", Config.SUPER_ADMIN_ID))
+            # Таблица резервных копий сессий
+            if 'session_backup' not in existing_tables:
+                self.execute('''CREATE TABLE session_backup (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              username TEXT NOT NULL,
+                              connection_id TEXT NOT NULL,
+                              session_hash TEXT NOT NULL,
+                              total_bytes_sent BIGINT DEFAULT 0,
+                              total_bytes_received BIGINT DEFAULT 0,
+                              start_time TIMESTAMP,
+                              end_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              backup_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              backup_reason TEXT
+                           )''')
 
             self.commit()
             logger.info("Все таблицы созданы/проверены")
@@ -155,7 +197,7 @@ class Database:
             logger.error(f"Ошибка при создании таблиц: {str(e)}")
             raise
 
-    # === МЕТОДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ===
+    # ========== МЕТОДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ==========
 
     def user_exists(self, username):
         cursor = self.execute("SELECT id FROM users WHERE username = ?", (username,))
@@ -182,10 +224,10 @@ class Database:
 
     def delete_user(self, username):
         try:
-            # Сначала создаем резервную копию данных пользователя
+            # Создаем резервную копию
             self.backup_user_data(username, "user_deletion")
 
-            # Затем удаляем пользователя (каскадно удалит все связанные записи)
+            # Удаляем пользователя
             cursor = self.execute("DELETE FROM users WHERE username = ?", (username,))
             self.commit()
             deleted = cursor.rowcount > 0
@@ -200,17 +242,16 @@ class Database:
 
     def clear_all_users(self):
         try:
-            # Создаем полную резервную копию перед очисткой
+            # Создаем полную резервную копию
             backup_file = self.create_full_backup("before_clear_all")
             logger.info(f"Создана резервная копия перед очисткой: {backup_file}")
 
-            # Очищаем таблицы в правильном порядке (с учетом foreign keys)
+            # Очищаем таблицы
             self.execute("DELETE FROM session_backup")
             self.execute("DELETE FROM active_sessions")
             self.execute("DELETE FROM user_stats")
             self.execute("DELETE FROM traffic_log")
             self.execute("DELETE FROM users")
-            # Не удаляем администраторов!
 
             self.commit()
             logger.info("Все пользователи удалены из БД")
@@ -220,7 +261,11 @@ class Database:
             logger.error(f"Ошибка очистки БД: {str(e)}")
             return False
 
-    # === МЕТОДЫ ДЛЯ АДМИНИСТРАТОРОВ ===
+    def get_user_count(self):
+        cursor = self.execute("SELECT COUNT(*) FROM users")
+        return cursor.fetchone()[0] or 0
+
+    # ========== МЕТОДЫ ДЛЯ АДМИНИСТРАТОРОВ ==========
 
     def is_admin(self, user_id):
         cursor = self.execute("SELECT id FROM admins WHERE user_id = ?", (user_id,))
@@ -255,12 +300,12 @@ class Database:
         self.commit()
         return cursor.rowcount > 0
 
-    # === МЕТОДЫ ДЛЯ СТАТИСТИКИ И ТРАФИКА ===
+    # ========== МЕТОДЫ ДЛЯ СТАТИСТИКИ И ТРАФИКА ==========
 
     def update_traffic(self, username, bytes_sent_diff, bytes_received_diff, connection_id=None):
         """Обновляет общий трафик пользователя"""
         try:
-            # Обновляем общий трафик пользователя
+            # Обновляем общий трафик
             self.execute('''UPDATE users 
                          SET total_bytes_sent = total_bytes_sent + ?,
                              total_bytes_received = total_bytes_received + ?,
@@ -288,15 +333,37 @@ class Database:
 
     def create_session_hash(self, username, connection_id, client_ip):
         """Создает уникальный хэш для сессии"""
-        import hashlib
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         data = f"{username}_{connection_id}_{client_ip}_{timestamp}"
         return hashlib.md5(data.encode()).hexdigest()[:16]
 
-    def update_active_session(self, username, connection_id, client_ip, current_sent, current_received):
-        """Обновляет или создает активную сессию, возвращает разницу трафика"""
+    def ensure_user_exists(self, username):
+        """Гарантирует что пользователь существует в БД"""
         try:
-            # Создаем/получаем хэш сессии
+            cursor = self.execute("SELECT id FROM users WHERE username = ?", (username,))
+            if cursor.fetchone() is None:
+                # Пользователя нет - создаем
+                logger.warning(f"Пользователь {username} не найден в БД, создаем...")
+                self.execute(
+                    "INSERT INTO users (username, created_by, created_by_username) VALUES (?, ?, ?)",
+                    (username, Config.SUPER_ADMIN_ID, "Система (автосоздание)")
+                )
+                self.commit()
+                logger.info(f"Пользователь {username} создан в БД")
+                return True
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка проверки/создания пользователя {username}: {str(e)}")
+            return False
+
+    def update_active_session(self, username, connection_id, client_ip, current_sent, current_received):
+        """Обновляет или создает активную сессию"""
+        try:
+            # Сначала гарантируем что пользователь существует
+            if not self.ensure_user_exists(username):
+                return 0, 0, None
+
+            # Создаем хэш сессии
             session_hash = self.create_session_hash(username, connection_id, client_ip)
 
             # Получаем предыдущие значения
@@ -312,14 +379,13 @@ class Database:
             if previous:
                 prev_hash, prev_sent, prev_received = previous
 
-                # Если хэш сессии изменился, значит это новая сессия
                 if prev_hash != session_hash:
-                    # Завершаем старую сессию
+                    # Новая сессия
                     self.finalize_session(username, connection_id, prev_hash, "session_reconnected")
                     bytes_sent_diff = current_sent
                     bytes_received_diff = current_received
                 else:
-                    # Та же сессия - вычисляем разницу
+                    # Та же сессия
                     bytes_sent_diff = max(0, current_sent - prev_sent)
                     bytes_received_diff = max(0, current_received - prev_received)
 
@@ -342,10 +408,18 @@ class Database:
                              (username, connection_id, session_hash, current_sent, current_received, client_ip))
 
                 # Регистрируем начало подключения
-                self.execute('''INSERT INTO user_stats 
-                             (username, connection_start, client_ip, status, session_id)
-                             VALUES (?, CURRENT_TIMESTAMP, ?, 'active', ?)''',
-                             (username, client_ip, session_hash))
+                try:
+                    self.execute('''INSERT INTO user_stats 
+                                 (username, connection_start, client_ip, status, session_id)
+                                 VALUES (?, CURRENT_TIMESTAMP, ?, 'active', ?)''',
+                                 (username, client_ip, session_hash))
+                except Exception as e:
+                    # Если session_id нет в таблице, вставляем без него
+                    logger.warning(f"Ошибка вставки с session_id: {e}, вставляем без него")
+                    self.execute('''INSERT INTO user_stats 
+                                 (username, connection_start, client_ip, status)
+                                 VALUES (?, CURRENT_TIMESTAMP, ?, 'active')''',
+                                 (username, client_ip))
 
                 # Увеличиваем счетчик подключений
                 self.execute('''UPDATE users 
@@ -424,10 +498,10 @@ class Database:
             return False
 
     def cleanup_old_sessions(self, active_usernames):
-        """Очищает старые сессии с резервным копированием"""
+        """Очищает старые сессии"""
         try:
             if not active_usernames:
-                # Если нет активных пользователей, завершаем все сессии
+                # Завершаем все сессии
                 cursor = self.execute("SELECT username, connection_id, session_hash FROM active_sessions")
                 all_sessions = cursor.fetchall()
 
@@ -435,7 +509,7 @@ class Database:
                     self.finalize_session(username, connection_id, session_hash, "cleanup_no_active")
 
                 self.execute("UPDATE users SET is_active = 0")
-                logger.info("Завершены все сессии (нет активных пользователей)")
+                logger.info("Завершены все сессии")
                 return True
 
             # Получаем сессии неактивных пользователей
@@ -447,11 +521,11 @@ class Database:
                                   active_usernames)
             old_sessions = cursor.fetchall()
 
-            # Завершаем каждую сессию с резервированием
+            # Завершаем старые сессии
             for username, connection_id, session_hash in old_sessions:
                 self.finalize_session(username, connection_id, session_hash, "cleanup_inactive")
 
-            # Помечаем неактивных пользователей
+            # Помещаем неактивных пользователей
             self.execute(f'''UPDATE users 
                          SET is_active = 0 
                          WHERE username NOT IN ({placeholders})''',
@@ -460,7 +534,7 @@ class Database:
             self.commit()
 
             if old_sessions:
-                logger.info(f"Очищено {len(old_sessions)} старых сессий с резервным копированием")
+                logger.info(f"Очищено {len(old_sessions)} старых сессий")
 
             return True
 
@@ -468,125 +542,9 @@ class Database:
             logger.error(f"Ошибка очистки сессий: {str(e)}")
             return False
 
-    def backup_user_data(self, username, reason):
-        """Создает резервную копию данных пользователя перед удалением"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = self.backup_dir / f"user_{username}_{timestamp}.json"
-
-            # Собираем все данные пользователя
-            user_data = {
-                "username": username,
-                "backup_time": datetime.now().isoformat(),
-                "backup_reason": reason,
-                "user_info": None,
-                "stats": [],
-                "traffic_logs": [],
-                "session_backups": []
-            }
-
-            # Данные пользователя
-            cursor = self.execute("SELECT * FROM users WHERE username = ?", (username,))
-            user_row = cursor.fetchone()
-            if user_row:
-                columns = [description[0] for description in cursor.description]
-                user_data["user_info"] = dict(zip(columns, user_row))
-
-            # Статистика подключений
-            cursor = self.execute("SELECT * FROM user_stats WHERE username = ? ORDER BY connection_start", (username,))
-            for row in cursor.fetchall():
-                columns = [description[0] for description in cursor.description]
-                user_data["stats"].append(dict(zip(columns, row)))
-
-            # Ежедневный трафик
-            cursor = self.execute("SELECT * FROM traffic_log WHERE username = ? ORDER BY log_date", (username,))
-            for row in cursor.fetchall():
-                columns = [description[0] for description in cursor.description]
-                user_data["traffic_logs"].append(dict(zip(columns, row)))
-
-            # Резервные копии сессий
-            cursor = self.execute("SELECT * FROM session_backup WHERE username = ? ORDER BY backup_time", (username,))
-            for row in cursor.fetchall():
-                columns = [description[0] for description in cursor.description]
-                user_data["session_backups"].append(dict(zip(columns, row)))
-
-            # Сохраняем в файл
-            with open(backup_file, 'w', encoding='utf-8') as f:
-                json.dump(user_data, f, ensure_ascii=False, indent=2, default=str)
-
-            logger.info(f"Создана резервная копия данных пользователя {username}: {backup_file}")
-            return str(backup_file)
-
-        except Exception as e:
-            logger.error(f"Ошибка создания резервной копии для {username}: {str(e)}")
-            return None
-
-    def create_full_backup(self, reason="manual"):
-        """Создает полную резервную копию базы данных"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = self.backup_dir / f"full_backup_{timestamp}.db"
-
-            # Копируем файл базы данных
-            shutil.copy2(self.db_path, backup_file)
-
-            # Также создаем JSON backup для читаемости
-            json_file = self.backup_dir / f"full_backup_{timestamp}.json"
-
-            backup_data = {
-                "backup_time": datetime.now().isoformat(),
-                "backup_reason": reason,
-                "database_file": str(backup_file),
-                "summary": {
-                    "total_users": 0,
-                    "total_admins": 0,
-                    "total_sessions": 0,
-                    "total_traffic_logs": 0
-                }
-            }
-
-            # Получаем статистику
-            cursor = self.execute("SELECT COUNT(*) FROM users")
-            backup_data["summary"]["total_users"] = cursor.fetchone()[0]
-
-            cursor = self.execute("SELECT COUNT(*) FROM admins")
-            backup_data["summary"]["total_admins"] = cursor.fetchone()[0]
-
-            cursor = self.execute("SELECT COUNT(*) FROM user_stats")
-            backup_data["summary"]["total_sessions"] = cursor.fetchone()[0]
-
-            cursor = self.execute("SELECT COUNT(*) FROM traffic_log")
-            backup_data["summary"]["total_traffic_logs"] = cursor.fetchone()[0]
-
-            with open(json_file, 'w', encoding='utf-8') as f:
-                json.dump(backup_data, f, ensure_ascii=False, indent=2, default=str)
-
-            # Очищаем старые бэкапы
-            self.cleanup_old_backups()
-
-            logger.info(f"Создана полная резервная копия: {backup_file}")
-            return str(backup_file)
-
-        except Exception as e:
-            logger.error(f"Ошибка создания полной резервной копии: {str(e)}")
-            return None
-
-    def cleanup_old_backups(self):
-        """Удаляет старые резервные копии"""
-        try:
-            cutoff_date = datetime.now() - timedelta(days=Config.BACKUP_RETENTION_DAYS)
-
-            for backup_file in self.backup_dir.glob("*"):
-                if backup_file.is_file():
-                    file_time = datetime.fromtimestamp(backup_file.stat().st_mtime)
-                    if file_time < cutoff_date:
-                        backup_file.unlink()
-                        logger.info(f"Удален старый бэкап: {backup_file.name}")
-
-            return True
-        except Exception as e:
-            logger.error(f"Ошибка очистки старых бэкапов: {str(e)}")
-            return False
+    def get_active_users_count(self):
+        cursor = self.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+        return cursor.fetchone()[0] or 0
 
     def get_user_statistics(self, username):
         """Получает статистику пользователя"""
@@ -630,13 +588,105 @@ class Database:
             logger.error(f"Ошибка получения статистики пользователя {username}: {str(e)}")
             return None
 
-    def get_active_users_count(self):
-        cursor = self.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-        return cursor.fetchone()[0] or 0
+    # ========== МЕТОДЫ ДЛЯ РЕЗЕРВНОГО КОПИРОВАНИЯ ==========
 
-    def get_user_count(self):
-        cursor = self.execute("SELECT COUNT(*) FROM users")
-        return cursor.fetchone()[0] or 0
+    def backup_user_data(self, username, reason):
+        """Создает резервную копию данных пользователя"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = self.backup_dir / f"user_{username}_{timestamp}.json"
+
+            user_data = {
+                "username": username,
+                "backup_time": datetime.now().isoformat(),
+                "backup_reason": reason,
+                "user_info": None,
+                "stats": [],
+                "traffic_logs": []
+            }
+
+            # Данные пользователя
+            cursor = self.execute("SELECT * FROM users WHERE username = ?", (username,))
+            user_row = cursor.fetchone()
+            if user_row:
+                columns = [description[0] for description in cursor.description]
+                user_data["user_info"] = dict(zip(columns, user_row))
+
+            # Статистика
+            cursor = self.execute("SELECT * FROM user_stats WHERE username = ? ORDER BY connection_start", (username,))
+            for row in cursor.fetchall():
+                columns = [description[0] for description in cursor.description]
+                user_data["stats"].append(dict(zip(columns, row)))
+
+            # Логи трафика
+            cursor = self.execute("SELECT * FROM traffic_log WHERE username = ? ORDER BY log_date", (username,))
+            for row in cursor.fetchall():
+                columns = [description[0] for description in cursor.description]
+                user_data["traffic_logs"].append(dict(zip(columns, row)))
+
+            # Сохраняем в файл
+            with open(backup_file, 'w', encoding='utf-8') as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=2, default=str)
+
+            logger.info(f"Создана резервная копия данных пользователя {username}")
+            return str(backup_file)
+
+        except Exception as e:
+            logger.error(f"Ошибка создания резервной копии для {username}: {str(e)}")
+            return None
+
+    def create_full_backup(self, reason="manual"):
+        """Создает полную резервную копию базы данных"""
+        try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = self.backup_dir / f"full_backup_{timestamp}.db"
+
+            # Копируем файл базы данных
+            shutil.copy2(self.db_path, backup_file)
+
+            # Создаем JSON backup
+            json_file = self.backup_dir / f"full_backup_{timestamp}.json"
+
+            backup_data = {
+                "backup_time": datetime.now().isoformat(),
+                "backup_reason": reason,
+                "database_file": str(backup_file),
+                "summary": {
+                    "total_users": self.get_user_count(),
+                    "total_admins": len(self.get_all_admins())
+                }
+            }
+
+            with open(json_file, 'w', encoding='utf-8') as f:
+                json.dump(backup_data, f, ensure_ascii=False, indent=2, default=str)
+
+            # Очищаем старые бэкапы
+            self.cleanup_old_backups()
+
+            logger.info(f"Создана полная резервная копия: {backup_file}")
+            return str(backup_file)
+
+        except Exception as e:
+            logger.error(f"Ошибка создания полной резервной копии: {str(e)}")
+            return None
+
+    def cleanup_old_backups(self):
+        """Удаляет старые резервные копии"""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=Config.BACKUP_RETENTION_DAYS)
+
+            for backup_file in self.backup_dir.glob("*"):
+                if backup_file.is_file():
+                    file_time = datetime.fromtimestamp(backup_file.stat().st_mtime)
+                    if file_time < cutoff_date:
+                        backup_file.unlink()
+                        logger.info(f"Удален старый бэкап: {backup_file.name}")
+
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка очистки старых бэкапов: {str(e)}")
+            return False
 
     def get_database_size(self):
         """Возвращает размер базы данных в байтах"""
@@ -666,11 +716,78 @@ class Database:
             return {
                 "total_backups": len(backups),
                 "total_size": total_size,
-                "backups": backups[:10]  # Последние 10 бэкапов
+                "backups": backups[:10]
             }
         except Exception as e:
             logger.error(f"Ошибка получения информации о бэкапах: {str(e)}")
             return {"total_backups": 0, "total_size": 0, "backups": []}
+
+    def reset_all_traffic(self):
+        """Обнуляет всю статистику трафика"""
+        try:
+            # Создаем резервную копию
+            backup_file = self.create_full_backup("before_reset_traffic")
+            logger.info(f"Создана резервная копия перед обнулением: {backup_file}")
+
+            # Обнуляем трафик
+            self.execute('''UPDATE users 
+                         SET total_bytes_sent = 0,
+                             total_bytes_received = 0,
+                             total_connections = 0,
+                             last_connected = NULL,
+                             last_updated = CURRENT_TIMESTAMP
+                         ''')
+
+            # Очищаем таблицы
+            self.execute("DELETE FROM traffic_log")
+            self.execute("DELETE FROM user_stats")
+
+            # Завершаем активные сессии
+            cursor = self.execute("SELECT username, connection_id, session_hash FROM active_sessions")
+            for username, connection_id, session_hash in cursor.fetchall():
+                self.finalize_session(username, connection_id, session_hash, "reset_traffic")
+
+            self.commit()
+            logger.warning("Вся статистика трафика обнулена")
+            return True
+
+        except Exception as e:
+            logger.error(f"Ошибка обнуления трафика: {str(e)}")
+            return False
+
+    def reset_user_traffic(self, username):
+        """Обнуляет статистику трафика для конкретного пользователя"""
+        try:
+            # Создаем резервную копию
+            self.backup_user_data(username, "before_reset_traffic")
+
+            # Обнуляем трафик пользователя
+            self.execute('''UPDATE users 
+                         SET total_bytes_sent = 0,
+                             total_bytes_received = 0,
+                             total_connections = 0,
+                             last_connected = NULL,
+                             last_updated = CURRENT_TIMESTAMP
+                         WHERE username = ?''',
+                         (username,))
+
+            # Удаляем статистику пользователя
+            self.execute("DELETE FROM traffic_log WHERE username = ?", (username,))
+            self.execute("DELETE FROM user_stats WHERE username = ?", (username,))
+
+            # Завершаем активные сессии пользователя
+            cursor = self.execute("SELECT connection_id, session_hash FROM active_sessions WHERE username = ?",
+                                  (username,))
+            for connection_id, session_hash in cursor.fetchall():
+                self.finalize_session(username, connection_id, session_hash, "reset_user_traffic")
+
+            self.commit()
+            logger.warning(f"Статистика трафика пользователя {username} обнулена")
+            return True
+
+        except Exception as e:
+            logger.error(f"Ошибка обнуления трафика пользователя {username}: {str(e)}")
+            return False
 
 
 # Глобальный экземпляр БД

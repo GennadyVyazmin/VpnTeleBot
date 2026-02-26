@@ -74,6 +74,9 @@ def check_single_instance():
 def main():
     """Основная функция запуска бота"""
 
+    # Создаем рабочие директории (в т.ч. директорию бэкапов)
+    Config.ensure_directories()
+
     # Проверка единственного экземпляра
     cleanup = check_single_instance()
 
@@ -85,16 +88,49 @@ def main():
     # Инициализация бота
     bot = telebot.TeleBot(Config.BOT_TOKEN)
 
+    # Импортируем здесь, чтобы избежать циклического импорта
+    from handlers.user_handlers import user_states
+
     # Настройка обработчиков
     setup_user_handlers(bot)
     setup_admin_handlers(bot)
     setup_callback_handlers(bot)
 
     # Обработчик неизвестных команд
-    @bot.message_handler(func=lambda message: True)
+    @bot.message_handler(func=lambda message: True, content_types=['text', 'contact', 'users_shared'])
     def handle_unknown(message):
         user_id = message.from_user.id
-        logger.info(f"Неизвестная команда от {user_id}: {message.text}")
+
+        # Проверяем, не находится ли пользователь в процессе ввода
+        if user_id in user_states:
+            state = user_states[user_id]
+
+            if state.get('waiting_for_username'):
+                # Пользователь вводит имя - обрабатываем в user_handlers
+                from handlers.user_handlers import process_username_step
+                process_username_step(bot, message)
+                return
+
+            elif state.get('waiting_for_admin_id'):
+                # Пользователь вводит ID админа
+                from handlers.callback_handlers import process_add_admin_manual
+                process_add_admin_manual(message, bot)
+                return
+
+            elif state.get('waiting_for_admin_forward'):
+                # Ожидаем пересланное сообщение
+                from handlers.callback_handlers import process_add_admin_forward
+                process_add_admin_forward(message, bot)
+                return
+
+            elif state.get('waiting_for_admin_contact'):
+                # Ожидаем контакт
+                from handlers.callback_handlers import process_add_admin_contact
+                process_add_admin_contact(message, bot)
+                return
+
+        # Если не в состоянии ожидания ввода, показываем сообщение
+        logger.info(f"Неизвестная команда от {user_id}: {getattr(message, 'text', None)}")
 
         if db.is_admin(user_id):
             bot.send_message(message.chat.id, "❓ Неизвестная команда. Используйте /start")
@@ -127,7 +163,7 @@ def main():
     # Запуск бота
     try:
         logger.info("Запуск polling бота...")
-        bot.polling(none_stop=True, interval=1, timeout=30)
+        bot.polling(none_stop=True, interval=1, timeout=30, skip_pending=True)
     except Exception as e:
         logger.critical(f"Критическая ошибка бота: {str(e)}")
         print(f"❌ Критическая ошибка: {str(e)}")

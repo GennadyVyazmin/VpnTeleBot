@@ -1,2 +1,9 @@
 .env
 vpn_bot.log
+__pycache__/
+*.pyc
+var/backups/
+bacup_database/
+users.db
+users.db-shm
+users.db-wal

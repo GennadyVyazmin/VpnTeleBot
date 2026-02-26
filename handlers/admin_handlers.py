@@ -6,7 +6,7 @@ from telebot import types
 from datetime import datetime
 from database import db
 from vpn_manager import vpn_manager
-from utils import get_backup_info_text, format_database_info
+from utils import get_backup_info_text, format_database_info, format_bytes
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,8 @@ def setup_admin_handlers(bot):
                 [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
                 [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
                 [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')],
+                [types.InlineKeyboardButton("🛠️ Fix БД из VPN", callback_data='admin_fixdb')],
+                [types.InlineKeyboardButton("♻️ Восстановить БД из бэкапа", callback_data='admin_restore_db')],
                 [types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
                 [types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
             ]
@@ -92,19 +94,20 @@ def setup_admin_handlers(bot):
 
         buttons = []
         for user in users:
-            username = user[1]
+            if len(user) >= 2:
+                username = user[1]
 
-            # Для супер-админа показываем кто создал пользователя
-            if db.is_super_admin(user_id):
-                created_by_username = user[3]
-                button_text = f"🗑️ {username} (создал: {created_by_username})"
-            else:
-                button_text = f"🗑️ {username}"
+                # Для супер-админа показываем кто создал пользователя
+                if db.is_super_admin(user_id) and len(user) >= 4:
+                    created_by_username = user[3]
+                    button_text = f"🗑️ {username} (создал: {created_by_username})"
+                else:
+                    button_text = f"🗑️ {username}"
 
-            buttons.append([types.InlineKeyboardButton(
-                button_text,
-                callback_data=f'delete_{username}'
-            )])
+                buttons.append([types.InlineKeyboardButton(
+                    button_text,
+                    callback_data=f'delete_{username}'
+                )])
 
         markup = types.InlineKeyboardMarkup(buttons)
 
@@ -114,71 +117,31 @@ def setup_admin_handlers(bot):
             bot.send_message(message.chat.id, "Выберите пользователя для удаления (только ваши пользователи):",
                              reply_markup=markup)
 
-    @bot.message_handler(commands=['dbclear'])
+    @bot.message_handler(commands=['clear'])
     def clear_database(message):
+        """Очистка всей базы данных"""
         user_id = message.from_user.id
 
         if not db.is_admin(user_id):
             bot.send_message(message.chat.id, "⛔ Доступ запрещен")
             return
 
-        logger.warning(f"Очистка БД инициирована администратором {user_id}")
+        logger.info(f"Команда /clear от администратора {user_id}")
 
         buttons = [
-            [types.InlineKeyboardButton("✅ Да, очистить с бэкапом", callback_data='confirm_clear_with_backup')],
+            [types.InlineKeyboardButton("✅ Создать бэкап и очистить", callback_data='confirm_clear_with_backup')],
             [types.InlineKeyboardButton("⚠️ Очистить без бэкапа", callback_data='confirm_clear_no_backup')],
             [types.InlineKeyboardButton("❌ Отмена", callback_data='cancel_clear')]
         ]
+
         markup = types.InlineKeyboardMarkup(buttons)
         bot.send_message(
             message.chat.id,
-            "⚠️ ВНИМАНИЕ! Вы уверены что хотите очистить всю базу данных?\n\n"
-            "📌 Рекомендуется создать бэкап перед очисткой.\n"
-            "Это действие нельзя отменить!",
+            "⚠️ Вы собираетесь очистить всю базу данных!\n\n"
+            "Это действие удалит:\n"
+            "• Всех пользователей\n"
+            "• Всю статистику трафика\n"
+            "• Все сессии\n\n"
+            "Выберите действие:",
             reply_markup=markup
         )
-
-    @bot.message_handler(commands=['backup'])
-    def backup_database(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Создание бэкапа БД администратором {user_id}")
-
-        bot.send_message(message.chat.id, "💾 Создание резервной копии базы данных...")
-
-        backup_file = db.create_full_backup("manual_backup")
-
-        if backup_file:
-            try:
-                with open(backup_file, 'rb') as f:
-                    bot.send_document(message.chat.id, f, caption="💾 Полная резервная копия БД")
-
-                backup_info = db.get_backup_info()
-                bot.send_message(message.chat.id,
-                                 f"✅ Бэкап создан успешно!\n"
-                                 f"📁 Файл: {os.path.basename(backup_file)}\n"
-                                 f"📊 Всего бэкапов: {backup_info['total_backups']}")
-
-            except Exception as e:
-                bot.send_message(message.chat.id, f"✅ Бэкап создан, но ошибка отправки: {str(e)}")
-        else:
-            bot.send_message(message.chat.id, "❌ Ошибка создания бэкапа")
-
-    @bot.message_handler(commands=['backuplist'])
-    def list_backups(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /backuplist от администратора {user_id}")
-
-        backup_info = db.get_backup_info()
-        backup_text = get_backup_info_text(backup_info)
-
-        bot.send_message(message.chat.id, backup_text)

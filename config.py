@@ -10,12 +10,15 @@ load_dotenv()
 class Config:
     # Основные настройки
     BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    SUPER_ADMIN_ID = 149999149
+    try:
+        SUPER_ADMIN_ID = int(os.getenv('SUPER_ADMIN_ID', '149999149'))
+    except ValueError:
+        SUPER_ADMIN_ID = 149999149
 
     # Пути
     BASE_DIR = Path(__file__).parent
     DB_PATH = BASE_DIR / 'users.db'
-    BACKUP_DIR = BASE_DIR / 'backups'
+    BACKUP_DIR = BASE_DIR / 'bacup_database'
     IKEV2_SCRIPT_PATH = '/usr/bin/ikev2.sh'
     VPN_PROFILES_PATH = '/root/'
 
@@ -36,4 +39,4 @@ class Config:
     @classmethod
     def ensure_directories(cls):
         """Создает необходимые директории"""
-        cls.BACKUP_DIR.mkdir(exist_ok=True)
+        cls.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
