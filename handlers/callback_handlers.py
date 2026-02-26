@@ -778,15 +778,16 @@ def setup_callback_handlers(bot):
             from handlers.user_handlers import user_states
             user_states[user_id] = {'waiting_for_admin_contact': True}
 
-            # Запрашиваем контакт через кнопку "Поделиться контактом"
+            # В Telegram request_contact=True отправляет только контакт самого отправителя.
+            # Поэтому просим отправить контакт вручную через вложения.
             keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            contact_button = types.KeyboardButton("📇 Поделиться контактом", request_contact=True)
-            cancel_button = types.KeyboardButton("❌ Отмена")
-            keyboard.add(contact_button, cancel_button)
+            keyboard.add(types.KeyboardButton("❌ Отмена"))
 
-            msg = bot.send_message(
+            bot.send_message(
                 call.message.chat.id,
-                "Нажмите кнопку ниже, чтобы поделиться контактом из вашего списка контактов Telegram:",
+                "Отправьте контакт пользователя вручную:\n"
+                "Скрепка -> Контакт -> выбрать пользователя.\n\n"
+                "Важно: добавить получится только если Telegram передаст user_id этого контакта.",
                 reply_markup=keyboard
             )
             bot.answer_callback_query(call.id, "📇 Запрос контакта")
@@ -1100,6 +1101,13 @@ def process_add_admin_contact(message, bot):
 
         if contact.user_id:
             user_id = contact.user_id
+            if user_id == message.from_user.id:
+                bot.send_message(
+                    message.chat.id,
+                    "❌ Получен ваш собственный контакт. Отправьте контакт другого пользователя.",
+                )
+                return
+
             username = contact.first_name
             if contact.last_name:
                 username += f" {contact.last_name}"

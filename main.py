@@ -94,7 +94,7 @@ def main():
     setup_callback_handlers(bot)
 
     # Обработчик неизвестных команд
-    @bot.message_handler(func=lambda message: True)
+    @bot.message_handler(func=lambda message: True, content_types=['text', 'contact'])
     def handle_unknown(message):
         user_id = message.from_user.id
 
