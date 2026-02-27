@@ -705,12 +705,27 @@ class Database:
             total_size = 0
             db_total_size = 0
 
-            for backup_file in sorted(self.backup_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True):
+            def _display_time(file_path):
+                # Для full_backup_YYYYMMDD_HHMMSS.* берем время из имени файла,
+                # потому что mtime может быть одинаковым при copy2/WAL.
+                match = re.match(r"^full_backup_(\d{8})_(\d{6})\.(db|json)$", file_path.name)
+                if match:
+                    try:
+                        return datetime.strptime(
+                            f"{match.group(1)}_{match.group(2)}",
+                            "%Y%m%d_%H%M%S"
+                        )
+                    except Exception:
+                        pass
+                return datetime.fromtimestamp(file_path.stat().st_mtime)
+
+            for backup_file in sorted(self.backup_dir.glob("*"), key=_display_time, reverse=True):
                 if backup_file.is_file():
+                    display_dt = _display_time(backup_file)
                     file_info = {
                         "name": backup_file.name,
                         "size": backup_file.stat().st_size,
-                        "modified": datetime.fromtimestamp(backup_file.stat().st_mtime).isoformat(),
+                        "modified": display_dt.isoformat(),
                         "path": str(backup_file)
                     }
                     backups.append(file_info)
