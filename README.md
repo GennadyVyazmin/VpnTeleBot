@@ -10,6 +10,9 @@ Telegram-бот для управления VPN пользователями и 
 wget https://get.vpnsetup.net -O vpn.sh && sudo sh vpn.sh
 ```
 
+Репозиторий автора скрипта:
+[hwdsl2/setup-ipsec-vpn](https://github.com/hwdsl2/setup-ipsec-vpn/tree/master)
+
 Без этого шага бот не сможет создавать/удалять VPN пользователей.
 
 ## Установка бота (рекомендуемый способ)
@@ -41,6 +44,7 @@ sudo journalctl -u vpn-telebot -n 100 --no-pager
 ```bash
 cd <INSTALL_DIR>
 sudo ./update.sh
+sudo systemctl restart vpn-telebot.service
 ```
 
 ## Удаление
