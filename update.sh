@@ -109,8 +109,8 @@ if command -v systemctl >/dev/null 2>&1; then
   if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
     echo "Restarting ${SERVICE_NAME}.service ..."
     systemctl daemon-reload
-    systemctl restart "$SERVICE_NAME"
-    systemctl --no-pager --full status "$SERVICE_NAME" || true
+    systemctl restart "${SERVICE_NAME}.service"
+    systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
   else
     echo "Service ${SERVICE_NAME}.service not found. Start manually:"
     echo "  $VENV_DIR/bin/python $PROJECT_DIR/main.py"

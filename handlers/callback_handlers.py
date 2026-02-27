@@ -158,8 +158,9 @@ def setup_callback_handlers(bot):
                 bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
 
         elif action == 'deleteuser':
-            bot.send_message(call.message.chat.id, "Используйте /deleteuser для удаления пользователя.")
-            bot.answer_callback_query(call.id, "⚡ Команда /deleteuser")
+            from handlers.admin_handlers import show_delete_user_menu
+            show_delete_user_menu(_message_as_caller(call), bot)
+            bot.answer_callback_query(call.id, "⚡ Удаление пользователя")
 
         else:
             bot.answer_callback_query(call.id, "❌ Неизвестная кнопка")

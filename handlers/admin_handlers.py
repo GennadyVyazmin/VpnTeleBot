@@ -12,6 +12,62 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+def show_delete_user_menu(message, bot=None):
+    """Показывает меню удаления пользователей с учетом прав админа."""
+    if bot is None:
+        from handlers.user_handlers import bot_instance as fallback_bot
+        bot = fallback_bot
+
+    if bot is None:
+        logger.error("Бот не инициализирован для show_delete_user_menu")
+        return
+
+    user_id = message.from_user.id
+
+    if not db.is_admin(user_id):
+        bot.send_message(message.chat.id, "⛔ Доступ запрещен")
+        return
+
+    logger.info(f"Открытие меню удаления пользователем {user_id}")
+
+    if db.is_super_admin(user_id):
+        users = db.get_all_users()
+    else:
+        cursor = db.execute("SELECT * FROM users WHERE created_by = ? ORDER BY created_at DESC", (user_id,))
+        users = cursor.fetchall()
+
+    if not users:
+        if db.is_super_admin(user_id):
+            bot.send_message(message.chat.id, "❌ В базе данных нет пользователей для удаления")
+        else:
+            bot.send_message(message.chat.id, "❌ У вас нет созданных пользователей для удаления")
+        return
+
+    buttons = []
+    for user in users:
+        if len(user) >= 2:
+            username = user[1]
+            if db.is_super_admin(user_id) and len(user) >= 4:
+                created_by_username = user[3]
+                button_text = f"🗑️ {username} (создал: {created_by_username})"
+            else:
+                button_text = f"🗑️ {username}"
+            buttons.append([types.InlineKeyboardButton(
+                button_text,
+                callback_data=f'delete_{username}'
+            )])
+
+    markup = types.InlineKeyboardMarkup(buttons)
+    if db.is_super_admin(user_id):
+        bot.send_message(message.chat.id, "Выберите пользователя для удаления:", reply_markup=markup)
+    else:
+        bot.send_message(
+            message.chat.id,
+            "Выберите пользователя для удаления (только ваши пользователи):",
+            reply_markup=markup
+        )
+
+
 def clear_database(message, bot=None):
     """Показывает подтверждение очистки всей базы данных."""
     if bot is None:
@@ -103,54 +159,7 @@ def setup_admin_handlers(bot):
 
     @bot.message_handler(commands=['deleteuser'])
     def delete_user(message):
-        user_id = message.from_user.id
-
-        if not db.is_admin(user_id):
-            bot.send_message(message.chat.id, "⛔ Доступ запрещен")
-            return
-
-        logger.info(f"Команда /deleteuser от администратора {user_id}")
-
-        # Если супер-админ - показывает всех пользователей
-        # Если обычный админ - показывает только своих пользователей
-        if db.is_super_admin(user_id):
-            users = db.get_all_users()
-        else:
-            # Получаем только своих пользователей
-            cursor = db.execute("SELECT * FROM users WHERE created_by = ? ORDER BY created_at DESC", (user_id,))
-            users = cursor.fetchall()
-
-        if not users:
-            if db.is_super_admin(user_id):
-                bot.send_message(message.chat.id, "❌ В базе данных нет пользователей для удаления")
-            else:
-                bot.send_message(message.chat.id, "❌ У вас нет созданных пользователей для удаления")
-            return
-
-        buttons = []
-        for user in users:
-            if len(user) >= 2:
-                username = user[1]
-
-                # Для супер-админа показываем кто создал пользователя
-                if db.is_super_admin(user_id) and len(user) >= 4:
-                    created_by_username = user[3]
-                    button_text = f"🗑️ {username} (создал: {created_by_username})"
-                else:
-                    button_text = f"🗑️ {username}"
-
-                buttons.append([types.InlineKeyboardButton(
-                    button_text,
-                    callback_data=f'delete_{username}'
-                )])
-
-        markup = types.InlineKeyboardMarkup(buttons)
-
-        if db.is_super_admin(user_id):
-            bot.send_message(message.chat.id, "Выберите пользователя для удаления:", reply_markup=markup)
-        else:
-            bot.send_message(message.chat.id, "Выберите пользователя для удаления (только ваши пользователи):",
-                             reply_markup=markup)
+        show_delete_user_menu(message, bot)
 
     @bot.message_handler(commands=['clear'])
     def clear_database_handler(message):
