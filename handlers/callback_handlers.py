@@ -137,8 +137,6 @@ def setup_callback_handlers(bot):
             else:
                 buttons = [
                     [types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
-                    [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
-                    [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
                     [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')]
                 ]
 
@@ -318,17 +316,29 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
-            bot.send_message(call.message.chat.id, "🔄 Выполняю reboot...")
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            # Сначала подтверждаем callback, затем планируем reboot,
+            # чтобы Telegram не переотправлял тот же callback после рестарта.
+            bot.answer_callback_query(call.id, "🔄 Перезагрузка запланирована")
+            bot.send_message(call.message.chat.id, "🔄 Сервер будет перезагружен через 5 секунд...")
             try:
-                subprocess.run(['reboot'], check=True)
-                bot.send_message(call.message.chat.id, "✅ Команда reboot отправлена")
-            except subprocess.CalledProcessError as e:
-                bot.send_message(call.message.chat.id, f"❌ Ошибка reboot: {e}")
+                subprocess.Popen(
+                    ['sh', '-c', 'sleep 5 && reboot'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
             except Exception as e:
                 bot.send_message(call.message.chat.id, f"❌ Неожиданная ошибка: {str(e)}")
-            bot.answer_callback_query(call.id, "🔄 Перезапуск")
 
         elif action == 'admin_backup':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
             bot.send_message(call.message.chat.id, "💾 Создание резервной копии...")
             backup_file = db.create_full_backup("manual_from_panel")
 

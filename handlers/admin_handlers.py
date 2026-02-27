@@ -76,8 +76,6 @@ def setup_admin_handlers(bot):
         else:
             buttons = [
                 [types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
-                [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
-                [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
                 [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')]
             ]
 
