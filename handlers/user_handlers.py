@@ -16,6 +16,9 @@ list_users_pages = {}
 # Глобальный словарь для хранения состояний пользователей
 user_states = {}
 
+# Экземпляр бота, инициализируется в setup_user_handlers
+bot_instance = None
+
 
 def split_message(text, max_length=4000):
     """Разбивает текст на части не длиннее max_length символов"""
@@ -200,9 +203,11 @@ def show_list_users_page(bot, chat_id, edit_message_id=None, callback_query_id=N
 def list_users(message):
     """Обработчик команды /listusers"""
     from handlers.user_handlers import list_users_pages, show_list_users_page
-    import sys
-    # Импортируем бота из main
-    from main import bot
+    bot = bot_instance
+
+    if bot is None:
+        logger.error("bot_instance не инициализирован в user_handlers")
+        return
 
     user_id = message.from_user.id
 
@@ -232,7 +237,11 @@ def list_users(message):
 
 def show_stats(message):
     """Обработчик команды /stats"""
-    from main import bot
+    bot = bot_instance
+
+    if bot is None:
+        logger.error("bot_instance не инициализирован в user_handlers")
+        return
 
     user_id = message.from_user.id
 
@@ -269,7 +278,11 @@ def show_stats(message):
 
 def user_stats(message):
     """Обработчик команды /userstats"""
-    from main import bot
+    bot = bot_instance
+
+    if bot is None:
+        logger.error("bot_instance не инициализирован в user_handlers")
+        return
 
     user_id = message.from_user.id
 
@@ -329,7 +342,11 @@ def user_stats(message):
 
 def show_active_stats(message):
     """Обработчик команды /activestats"""
-    from main import bot
+    bot = bot_instance
+
+    if bot is None:
+        logger.error("bot_instance не инициализирован в user_handlers")
+        return
 
     user_id = message.from_user.id
 
@@ -374,6 +391,8 @@ def show_active_stats(message):
 
 def setup_user_handlers(bot):
     """Настройка обработчиков команд пользователя"""
+    global bot_instance
+    bot_instance = bot
 
     @bot.message_handler(commands=['start'])
     def start(message):

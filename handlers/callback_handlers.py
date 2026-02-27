@@ -2,6 +2,9 @@ import telebot
 import logging
 import subprocess
 import socket
+import os
+import sys
+from pathlib import Path
 from telebot import types
 from database import db
 from vpn_manager import vpn_manager
@@ -116,6 +119,8 @@ def setup_callback_handlers(bot):
                     [types.InlineKeyboardButton("🔄 Перезапустить VPN", callback_data='admin_restart')],
                     [types.InlineKeyboardButton("💾 Создать бэкап", callback_data='admin_backup')],
                     [types.InlineKeyboardButton("📋 Список бэкапов", callback_data='admin_backup_list')],
+                    [types.InlineKeyboardButton("🛠️ Fix БД из VPN", callback_data='admin_fixdb')],
+                    [types.InlineKeyboardButton("♻️ Восстановить БД из бэкапа", callback_data='admin_restore_db')],
                     [types.InlineKeyboardButton("🧹 Очистить БД", callback_data='admin_clear_db')],
                     [types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')]
                 ]
@@ -189,12 +194,54 @@ def setup_callback_handlers(bot):
             logger.error(f"Ошибка обработки callback {call.data}: {str(e)}")
             bot.answer_callback_query(call.id, "❌ Ошибка обработки запроса")
 
+    @bot.callback_query_handler(
+        func=lambda call: call.data.startswith('listusers_prev_') or
+                          call.data.startswith('listusers_next_') or
+                          call.data == 'listusers_refresh'
+    )
+    def handle_listusers_pagination(call):
+        from handlers.user_handlers import list_users_pages, show_list_users_page
+
+        chat_id = call.message.chat.id
+        if chat_id not in list_users_pages:
+            bot.answer_callback_query(call.id, "⚠️ Данные устарели, откройте список снова")
+            return
+
+        if call.data == 'listusers_refresh':
+            list_users_pages[chat_id]['users'] = db.get_all_users()
+            list_users_pages[chat_id]['page'] = 0
+        elif call.data.startswith('listusers_prev_'):
+            new_page = int(call.data.replace('listusers_prev_', ''))
+            list_users_pages[chat_id]['page'] = max(0, new_page)
+        elif call.data.startswith('listusers_next_'):
+            new_page = int(call.data.replace('listusers_next_', ''))
+            list_users_pages[chat_id]['page'] = max(0, new_page)
+
+        show_list_users_page(
+            bot,
+            chat_id,
+            edit_message_id=call.message.message_id,
+            callback_query_id=call.id
+        )
+
+    @bot.callback_query_handler(
+        func=lambda call: call.data.startswith('userstats_page_') or call.data == 'userstats_refresh'
+    )
+    def handle_userstats_navigation(call):
+        from handlers.user_handlers import user_stats
+        user_stats(call.message)
+        bot.answer_callback_query(call.id, "🔄 Список обновлен")
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith('userstats_'))
     def handle_user_stats(call):
         user_id = call.from_user.id
 
         if not db.is_admin(user_id):
             bot.answer_callback_query(call.id, "⛔ Доступ запрещен")
+            return
+
+        if call.data.startswith('userstats_page_') or call.data == 'userstats_refresh':
+            bot.answer_callback_query(call.id)
             return
 
         username = call.data.replace('userstats_', '')
@@ -261,12 +308,12 @@ def setup_callback_handlers(bot):
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
-            bot.send_message(call.message.chat.id, "🔄 Перезапуск VPN службы...")
+            bot.send_message(call.message.chat.id, "🔄 Выполняю reboot...")
             try:
-                subprocess.run(['systemctl', 'restart', 'strongswan'], check=True)
-                bot.send_message(call.message.chat.id, "✅ StrongSwan перезапущен")
+                subprocess.run(['reboot'], check=True)
+                bot.send_message(call.message.chat.id, "✅ Команда reboot отправлена")
             except subprocess.CalledProcessError as e:
-                bot.send_message(call.message.chat.id, f"❌ Ошибка перезапуска StrongSwan: {e}")
+                bot.send_message(call.message.chat.id, f"❌ Ошибка reboot: {e}")
             except Exception as e:
                 bot.send_message(call.message.chat.id, f"❌ Неожиданная ошибка: {str(e)}")
             bot.answer_callback_query(call.id, "🔄 Перезапуск")
@@ -291,6 +338,102 @@ def setup_callback_handlers(bot):
             backup_text = get_backup_info_text(backup_info)
             bot.send_message(call.message.chat.id, backup_text)
             bot.answer_callback_query(call.id, "📋 Список бэкапов")
+
+        elif action == 'admin_fixdb':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            markup = types.InlineKeyboardMarkup([
+                [types.InlineKeyboardButton("✅ Запустить fix_database", callback_data='admin_fixdb_confirm')],
+                [types.InlineKeyboardButton("❌ Отмена", callback_data='admin_fixdb_cancel')]
+            ])
+            bot.send_message(
+                call.message.chat.id,
+                "⚠️ Будет запущен скрипт восстановления пользователей из VPN-конфигов.\nПродолжить?",
+                reply_markup=markup
+            )
+            bot.answer_callback_query(call.id, "🛠️ Подтвердите запуск")
+
+        elif action == 'admin_fixdb_confirm':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            bot.send_message(call.message.chat.id, "🛠️ Запускаю fix_database.py...")
+            script_path = Path(__file__).resolve().parent.parent / "fix_database.py"
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=180
+                )
+                if result.returncode == 0:
+                    bot.send_message(call.message.chat.id, "✅ fix_database выполнен успешно")
+                else:
+                    error_text = (result.stderr or result.stdout or "unknown error")[-1500:]
+                    bot.send_message(call.message.chat.id, f"❌ fix_database завершился с ошибкой:\n{error_text}")
+            except Exception as e:
+                bot.send_message(call.message.chat.id, f"❌ Ошибка запуска fix_database: {e}")
+            bot.answer_callback_query(call.id, "🛠️ Выполнено")
+
+        elif action == 'admin_fixdb_cancel':
+            bot.send_message(call.message.chat.id, "❌ Запуск fix_database отменен")
+            bot.answer_callback_query(call.id, "❌ Отменено")
+
+        elif action == 'admin_restore_db':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            backup_info = db.get_backup_info()
+            db_backups = [b for b in backup_info.get("backups", []) if b.get("path", "").endswith(".db")]
+            if not db_backups:
+                bot.send_message(call.message.chat.id, "❌ Не найдено .db бэкапов для восстановления")
+                bot.answer_callback_query(call.id, "❌ Нет бэкапов")
+                return
+
+            latest_backup = db_backups[0]
+            latest_name = latest_backup.get("name", "unknown")
+            latest_path = latest_backup.get("path", "")
+
+            markup = types.InlineKeyboardMarkup([
+                [types.InlineKeyboardButton("✅ Восстановить", callback_data='admin_restore_latest_confirm')],
+                [types.InlineKeyboardButton("❌ Отмена", callback_data='admin_restore_latest_cancel')]
+            ])
+            bot.send_message(
+                call.message.chat.id,
+                f"⚠️ Восстановить БД из последнего бэкапа?\n\n"
+                f"Файл: {latest_name}\n"
+                f"Путь: {latest_path}",
+                reply_markup=markup
+            )
+            bot.answer_callback_query(call.id, "♻️ Подтвердите восстановление")
+
+        elif action == 'admin_restore_latest_confirm':
+            if not db.is_super_admin(user_id):
+                bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
+                return
+
+            backup_info = db.get_backup_info()
+            db_backups = [b for b in backup_info.get("backups", []) if b.get("path", "").endswith(".db")]
+            if not db_backups:
+                bot.send_message(call.message.chat.id, "❌ Не найдено .db бэкапов для восстановления")
+                bot.answer_callback_query(call.id, "❌ Нет бэкапов")
+                return
+
+            latest_path = db_backups[0]["path"]
+            ok, msg = db.restore_from_backup_file(latest_path)
+            if ok:
+                bot.send_message(call.message.chat.id, f"✅ {msg}\nИсточник: {latest_path}")
+            else:
+                bot.send_message(call.message.chat.id, f"❌ {msg}")
+            bot.answer_callback_query(call.id, "♻️ Готово")
+
+        elif action == 'admin_restore_latest_cancel':
+            bot.send_message(call.message.chat.id, "❌ Восстановление БД отменено")
+            bot.answer_callback_query(call.id, "❌ Отменено")
 
         elif action == 'admin_clear_db':
             from handlers.admin_handlers import clear_database
@@ -672,3 +815,16 @@ def send_windows_profile(bot, call, username):
             bot.send_document(call.message.chat.id, file, caption="Windows сертификат")
     else:
         bot.send_message(call.message.chat.id, f"❌ Файл Windows сертификат не найден")
+
+    # Дополнительные файлы для упрощенного импорта на Windows
+    helper_files = [
+        (Path("/root/ikev2_config_import.cmd"), "ikev2_config_import.cmd"),
+        (Path("/root/Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg"),
+         "Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg")
+    ]
+    for helper_path, caption in helper_files:
+        if helper_path.exists():
+            with open(helper_path, 'rb') as file:
+                bot.send_document(call.message.chat.id, file, caption=caption)
+        else:
+            logger.warning(f"Windows helper file not found: {helper_path}")
