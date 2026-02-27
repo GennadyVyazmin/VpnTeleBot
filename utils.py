@@ -85,12 +85,21 @@ def format_time_delta(seconds):
 
 def get_backup_info_text(backup_info):
     """Форматирует информацию о бэкапах"""
-    if not backup_info or backup_info.get("total_backups", 0) == 0:
+    if not backup_info:
         return "📭 Резервных копий нет"
 
-    text = f"💾 Резервные копии ({backup_info.get('total_backups', 0)} шт., {format_bytes(backup_info.get('total_size', 0))}):\n\n"
+    db_backups = [
+        b for b in backup_info.get("backups", [])
+        if str(b.get("name", "")).endswith(".db")
+    ]
 
-    for i, backup in enumerate(backup_info.get("backups", [])[:10], 1):
+    if not db_backups:
+        return "📭 Резервных копий БД (.db) нет"
+
+    db_total_size = sum((b.get("size", 0) or 0) for b in db_backups)
+    text = f"💾 Резервные копии БД ({len(db_backups)} шт., {format_bytes(db_total_size)}):\n\n"
+
+    for i, backup in enumerate(db_backups[:10], 1):
         text += f"{i}. {backup.get('name', 'unknown')}\n"
         text += f"   📏 Размер: {format_bytes(backup.get('size', 0))}\n"
         text += f"   🕐 Создан: {backup.get('modified', '')[:19] if backup.get('modified') else 'Неизвестно'}\n\n"
