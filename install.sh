@@ -163,6 +163,16 @@ fi
 rm -rf "$TMP_DIR"
 echo "Project prepared in: $PROJECT_DIR"
 
+# Копируем дополнительные Windows-файлы в /root для отправки из бота.
+for helper_file in "Enable_Stronger_Ciphers_for_IKEv2_on_Windows.reg" "ikev2_config_import.cmd"; do
+  if [[ -f "$PROJECT_DIR/$helper_file" ]]; then
+    install -m 0644 "$PROJECT_DIR/$helper_file" "/root/$helper_file"
+    echo "Copied: /root/$helper_file"
+  else
+    echo "Warning: file not found, skipped: $PROJECT_DIR/$helper_file"
+  fi
+done
+
 VENV_DIR="$PROJECT_DIR/.venv"
 ENV_FILE="$PROJECT_DIR/.env"
 
