@@ -5,6 +5,7 @@ import socket
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from telebot import types
 from database import db
 from vpn_manager import vpn_manager
@@ -70,6 +71,15 @@ def _get_server_ip():
     return "YOUR_SERVER_IP"
 
 
+def _message_as_caller(call):
+    """Создает message-like объект с from_user = инициатор callback."""
+    return SimpleNamespace(
+        chat=call.message.chat,
+        from_user=call.from_user,
+        message_id=call.message.message_id
+    )
+
+
 def setup_callback_handlers(bot):
     """Настройка обработчиков callback запросов"""
 
@@ -94,22 +104,22 @@ def setup_callback_handlers(bot):
 
         elif action == 'listusers':
             from handlers.user_handlers import list_users
-            list_users(call.message)
+            list_users(_message_as_caller(call))
             bot.answer_callback_query(call.id, "⚡ Список пользователей")
 
         elif action == 'stats':
             from handlers.user_handlers import show_stats
-            show_stats(call.message)
+            show_stats(_message_as_caller(call))
             bot.answer_callback_query(call.id, "⚡ Статистика сервера")
 
         elif action == 'userstats':
             from handlers.user_handlers import user_stats
-            user_stats(call.message)
+            user_stats(_message_as_caller(call))
             bot.answer_callback_query(call.id, "⚡ Статистика пользователей")
 
         elif action == 'activestats':
             from handlers.user_handlers import show_active_stats
-            show_active_stats(call.message)
+            show_active_stats(_message_as_caller(call))
             bot.answer_callback_query(call.id, "⚡ Активные подключения")
 
         elif action == 'admin':
@@ -229,7 +239,7 @@ def setup_callback_handlers(bot):
     )
     def handle_userstats_navigation(call):
         from handlers.user_handlers import user_stats
-        user_stats(call.message)
+        user_stats(_message_as_caller(call))
         bot.answer_callback_query(call.id, "🔄 Список обновлен")
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('userstats_'))
@@ -304,7 +314,7 @@ def setup_callback_handlers(bot):
 
         if action == 'admin_stats':
             from handlers.user_handlers import show_stats
-            show_stats(call.message)
+            show_stats(_message_as_caller(call))
             bot.answer_callback_query(call.id, "📊 Статистика обновлена")
 
         elif action == 'admin_restart':
@@ -437,13 +447,13 @@ def setup_callback_handlers(bot):
 
         elif action == 'admin_clear_db':
             from handlers.admin_handlers import clear_database
-            clear_database(call.message)
+            clear_database(_message_as_caller(call), bot)
             bot.answer_callback_query(call.id, "🧹 Подтвердите очистку")
 
         elif action == 'admin_manage':
             if db.is_super_admin(user_id):
                 from handlers.admin_handlers import manage_admins
-                manage_admins(call.message)
+                manage_admins(_message_as_caller(call))
                 bot.answer_callback_query(call.id, "👑 Управление админами")
             else:
                 bot.answer_callback_query(call.id, "⛔ Только для супер-админа")
@@ -470,7 +480,6 @@ def setup_callback_handlers(bot):
             if db.is_super_admin(user_id):
                 buttons = [
                     [types.InlineKeyboardButton("📝 Ввести ID вручную", callback_data='add_manual')],
-                    [types.InlineKeyboardButton("🔗 Переслать сообщение", callback_data='add_forward')],
                     [types.InlineKeyboardButton("📇 Выбрать из контакта", callback_data='add_contact')],
                     [types.InlineKeyboardButton("❌ Отмена", callback_data='add_cancel')]
                 ]
@@ -594,12 +603,20 @@ def setup_callback_handlers(bot):
 
         elif method == 'add_contact':
             keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            keyboard.add(types.KeyboardButton("📱 Отправить мой контакт", request_contact=True))
+            if hasattr(types, "KeyboardButtonRequestUsers"):
+                request = types.KeyboardButtonRequestUsers(
+                    request_id=1,
+                    user_is_bot=False,
+                    max_quantity=1
+                )
+                keyboard.add(types.KeyboardButton("📇 Выбрать пользователя", request_users=request))
+            else:
+                keyboard.add(types.KeyboardButton("📱 Отправить контакт", request_contact=True))
             keyboard.add(types.KeyboardButton("❌ Отмена"))
             msg = bot.send_message(
                 call.message.chat.id,
-                "Отправьте контакт пользователя.\n\n"
-                "Важно: Telegram передает ID только если контакт связан с Telegram-аккаунтом.",
+                "Выберите пользователя из списка Telegram контактов.\n\n"
+                "Если список не откроется (старая версия Telegram API), отправьте контакт вручную.",
                 reply_markup=keyboard
             )
             bot.register_next_step_handler(msg, process_add_admin_contact, bot)
@@ -654,29 +671,36 @@ def process_add_admin_contact(message, bot):
         bot.send_message(message.chat.id, "❌ Добавление админа отменено", reply_markup=types.ReplyKeyboardRemove())
         return
 
-    contact = getattr(message, 'contact', None)
-    if not contact:
-        bot.send_message(
-            message.chat.id,
-            "❌ Контакт не получен. Отправьте контакт или используйте ввод ID вручную.",
-            reply_markup=types.ReplyKeyboardRemove()
-        )
-        return
+    contact_user_id = None
+    username = None
 
-    contact_user_id = getattr(contact, 'user_id', None)
+    users_shared = getattr(message, 'users_shared', None)
+    if users_shared and getattr(users_shared, 'users', None):
+        selected_user = users_shared.users[0]
+        contact_user_id = getattr(selected_user, 'user_id', None) or getattr(selected_user, 'id', None)
+        if contact_user_id:
+            try:
+                user_info = bot.get_chat(contact_user_id)
+                username = f"@{user_info.username}" if user_info.username else f"{user_info.first_name}"
+            except Exception:
+                username = f"Пользователь {contact_user_id}"
+
+    contact = getattr(message, 'contact', None)
+    if contact and not contact_user_id:
+        contact_user_id = getattr(contact, 'user_id', None)
+        first_name = getattr(contact, 'first_name', '') or ''
+        last_name = getattr(contact, 'last_name', '') or ''
+        full_name = (first_name + (' ' + last_name if last_name else '')).strip()
+        username = full_name if full_name else f"Пользователь {contact_user_id}"
+
     if not contact_user_id:
         bot.send_message(
             message.chat.id,
-            "❌ У контакта нет Telegram ID, поэтому добавить его нельзя.\n"
-            "Используйте добавление по ID вручную.",
+            "❌ Пользователь не выбран. Используйте выбор из контактов или ввод ID вручную.",
             reply_markup=types.ReplyKeyboardRemove()
         )
         return
 
-    first_name = getattr(contact, 'first_name', '') or ''
-    last_name = getattr(contact, 'last_name', '') or ''
-    full_name = (first_name + (' ' + last_name if last_name else '')).strip()
-    username = full_name if full_name else f"Пользователь {contact_user_id}"
     if db.add_admin(contact_user_id, username, Config.SUPER_ADMIN_ID):
         bot.send_message(
             message.chat.id,

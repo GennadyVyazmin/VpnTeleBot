@@ -5,6 +5,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 SERVICE_NAME="vpn-telebot"
 SAFE_DIR="$PROJECT_DIR/.db_safe"
+REPO_BRANCH="${REPO_BRANCH:-master}"
 
 cd "$PROJECT_DIR"
 
@@ -37,9 +38,9 @@ echo "Saving DB files to $SAFE_DIR ..."
 cp -a users.db users.db-shm users.db-wal "$SAFE_DIR"/ 2>/dev/null || true
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "Updating git repository..."
+  echo "Updating git repository from branch: $REPO_BRANCH ..."
   git fetch origin
-  git pull --ff-only origin main
+  git pull --ff-only origin "$REPO_BRANCH"
 else
   echo "Warning: not a git repository, skipping git pull."
 fi
