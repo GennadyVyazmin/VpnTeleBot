@@ -409,7 +409,9 @@ def setup_callback_handlers(bot):
                 return
 
             backup_info = db.get_backup_info()
-            db_backups = [b for b in backup_info.get("backups", []) if b.get("path", "").endswith(".db")]
+            db_backups = backup_info.get("db_backups", [])
+            if not db_backups:
+                db_backups = [b for b in backup_info.get("backups", []) if b.get("path", "").endswith(".db")]
             if not db_backups:
                 bot.send_message(call.message.chat.id, "❌ Не найдено .db бэкапов для восстановления")
                 bot.answer_callback_query(call.id, "❌ Нет бэкапов")
@@ -438,7 +440,9 @@ def setup_callback_handlers(bot):
                 return
 
             backup_info = db.get_backup_info()
-            db_backups = [b for b in backup_info.get("backups", []) if b.get("path", "").endswith(".db")]
+            db_backups = backup_info.get("db_backups", [])
+            if not db_backups:
+                db_backups = [b for b in backup_info.get("backups", []) if b.get("path", "").endswith(".db")]
             if not db_backups:
                 bot.send_message(call.message.chat.id, "❌ Не найдено .db бэкапов для восстановления")
                 bot.answer_callback_query(call.id, "❌ Нет бэкапов")

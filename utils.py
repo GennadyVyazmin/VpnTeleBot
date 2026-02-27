@@ -88,16 +88,19 @@ def get_backup_info_text(backup_info):
     if not backup_info:
         return "📭 Резервных копий нет"
 
-    db_backups = [
-        b for b in backup_info.get("backups", [])
-        if str(b.get("name", "")).endswith(".db")
-    ]
+    db_backups = backup_info.get("db_backups", [])
+    if not db_backups:
+        db_backups = [
+            b for b in backup_info.get("backups", [])
+            if str(b.get("name", "")).endswith(".db")
+        ]
 
     if not db_backups:
         return "📭 Резервных копий БД (.db) нет"
 
-    db_total_size = sum((b.get("size", 0) or 0) for b in db_backups)
-    text = f"💾 Резервные копии БД ({len(db_backups)} шт., {format_bytes(db_total_size)}):\n\n"
+    db_total = backup_info.get("total_db_backups", len(db_backups))
+    db_total_size = backup_info.get("db_total_size", sum((b.get("size", 0) or 0) for b in db_backups))
+    text = f"💾 Резервные копии БД ({db_total} шт., {format_bytes(db_total_size)}):\n\n"
 
     for i, backup in enumerate(db_backups[:10], 1):
         text += f"{i}. {backup.get('name', 'unknown')}\n"

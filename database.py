@@ -701,7 +701,9 @@ class Database:
         """Возвращает информацию о резервных копиях"""
         try:
             backups = []
+            db_backups = []
             total_size = 0
+            db_total_size = 0
 
             for backup_file in sorted(self.backup_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True):
                 if backup_file.is_file():
@@ -713,15 +715,30 @@ class Database:
                     }
                     backups.append(file_info)
                     total_size += file_info["size"]
+                    if backup_file.suffix == ".db":
+                        db_backups.append(file_info)
+                        db_total_size += file_info["size"]
 
             return {
                 "total_backups": len(backups),
                 "total_size": total_size,
-                "backups": backups[:10]
+                "total_db_backups": len(db_backups),
+                "db_total_size": db_total_size,
+                # Оставляем общие файлы для совместимости
+                "backups": backups[:10],
+                # Отдельно список реальных бэкапов БД
+                "db_backups": db_backups[:10]
             }
         except Exception as e:
             logger.error(f"Ошибка получения информации о бэкапах: {str(e)}")
-            return {"total_backups": 0, "total_size": 0, "backups": []}
+            return {
+                "total_backups": 0,
+                "total_size": 0,
+                "total_db_backups": 0,
+                "db_total_size": 0,
+                "backups": [],
+                "db_backups": []
+            }
 
     def reset_all_traffic(self):
         """Обнуляет всю статистику трафика"""
