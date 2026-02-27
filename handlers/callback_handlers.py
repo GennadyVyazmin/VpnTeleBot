@@ -237,9 +237,26 @@ def setup_callback_handlers(bot):
         func=lambda call: call.data.startswith('userstats_page_') or call.data == 'userstats_refresh'
     )
     def handle_userstats_navigation(call):
-        from handlers.user_handlers import user_stats
-        user_stats(_message_as_caller(call))
-        bot.answer_callback_query(call.id, "🔄 Список обновлен")
+        from handlers.user_handlers import user_stats_pages, show_user_stats_page
+
+        chat_id = call.message.chat.id
+        if chat_id not in user_stats_pages:
+            bot.answer_callback_query(call.id, "⚠️ Данные устарели, откройте /userstats снова")
+            return
+
+        if call.data == 'userstats_refresh':
+            user_stats_pages[chat_id]['users'] = db.get_all_users()
+            user_stats_pages[chat_id]['page'] = 0
+        elif call.data.startswith('userstats_page_'):
+            new_page = int(call.data.replace('userstats_page_', ''))
+            user_stats_pages[chat_id]['page'] = max(0, new_page)
+
+        show_user_stats_page(
+            bot,
+            chat_id,
+            edit_message_id=call.message.message_id,
+            callback_query_id=call.id
+        )
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('userstats_'))
     def handle_user_stats(call):

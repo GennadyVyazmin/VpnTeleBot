@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Глобальные переменные для хранения состояния пагинации
 list_users_pages = {}
+user_stats_pages = {}
 
 # Глобальный словарь для хранения состояний пользователей
 user_states = {}
@@ -297,15 +298,34 @@ def user_stats(message):
         bot.send_message(message.chat.id, "📭 В базе данных нет пользователей")
         return
 
-    # Создаем пагинированный список кнопок
-    buttons_per_page = 10
-    total_pages = (len(users) + buttons_per_page - 1) // buttons_per_page
-    page = 0  # Можно добавить навигацию по страницам
+    chat_id = message.chat.id
+    user_stats_pages[chat_id] = {
+        'users': users,
+        'page': 0,
+        'page_size': 10
+    }
+    show_user_stats_page(bot, chat_id)
 
-    start_idx = page * buttons_per_page
-    end_idx = min(start_idx + buttons_per_page, len(users))
 
-    # Создаем кнопки пользователей
+def show_user_stats_page(bot, chat_id, edit_message_id=None, callback_query_id=None):
+    """Показывает страницу списка пользователей для статистики."""
+    if chat_id not in user_stats_pages:
+        if callback_query_id:
+            try:
+                bot.answer_callback_query(callback_query_id, "Данные устарели. Используйте /userstats снова")
+            except Exception:
+                pass
+        return
+
+    data = user_stats_pages[chat_id]
+    users = data['users']
+    page = data['page']
+    page_size = data['page_size']
+    total_pages = max(1, (len(users) + page_size - 1) // page_size)
+
+    start_idx = page * page_size
+    end_idx = min(start_idx + page_size, len(users))
+
     buttons = []
     for i in range(start_idx, end_idx):
         user = users[i]
@@ -318,7 +338,6 @@ def user_stats(message):
                 callback_data=f'userstats_{username}'
             )])
 
-    # Добавляем кнопки навигации если есть больше одной страницы
     if total_pages > 1:
         nav_buttons = []
         if page > 0:
@@ -329,15 +348,35 @@ def user_stats(message):
         if nav_buttons:
             buttons.append(nav_buttons)
 
-    # Кнопка обновления списка
     buttons.append([types.InlineKeyboardButton("🔄 Обновить список", callback_data='userstats_refresh')])
-
     markup = types.InlineKeyboardMarkup(buttons)
-    bot.send_message(
-        message.chat.id,
-        f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):",
-        reply_markup=markup
-    )
+    text = f"Выберите пользователя для просмотра статистики (стр. {page + 1}/{total_pages}):"
+
+    try:
+        if edit_message_id:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=edit_message_id,
+                text=text,
+                reply_markup=markup
+            )
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup)
+
+        if callback_query_id:
+            bot.answer_callback_query(callback_query_id)
+    except telebot.apihelper.ApiTelegramException as e:
+        error_msg = str(e)
+        if "message is not modified" in error_msg:
+            if callback_query_id:
+                try:
+                    bot.answer_callback_query(callback_query_id)
+                except Exception:
+                    pass
+        elif "query is too old" in error_msg or "query ID is invalid" in error_msg:
+            pass
+        else:
+            logger.error(f"Ошибка Telegram API при userstats пагинации: {e}")
 
 
 def show_active_stats(message):
